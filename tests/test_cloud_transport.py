@@ -263,6 +263,17 @@ def test_the_main_feed_wins_over_the_feed_through_lugs() -> None:
     assert snapshot.instant_grid_power_w == 2611.0
 
 
+def test_a_breaker_without_a_rating_gets_no_switch() -> None:
+    """The battery's breaker on a MAIN 40 (46/48) has a relay but no rating."""
+    schema = _panel_schema(SERIAL_40, {21: ("Kitchen", (9,))}, flows=False)
+    schema.add(_spec("circuit-51", NodeKind.CIRCUIT, "power", "W", spaces=(46, 48)))
+    schema.add(_spec("circuit-51", NodeKind.CIRCUIT, "relay"))
+    snapshot = build_snapshot(PanelIdentity(SERIAL_40, "MAIN 40"), schema, {}, lambda _k: None)
+
+    assert snapshot.circuits["21"].is_user_controllable
+    assert not snapshot.circuits["51"].is_user_controllable
+
+
 def test_space_numbers_are_never_renumbered() -> None:
     """Breakers keep SPAN's numbers whichever spaces are in use."""
     schema = _panel_schema(SERIAL_16, {21: ("A", (9,)), 22: ("B", (24,))}, flows=False)

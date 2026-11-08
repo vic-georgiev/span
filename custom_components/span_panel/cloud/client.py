@@ -33,7 +33,13 @@ from span_panel_api import (
 )
 
 from .hub import CloudSiteHub, PanelFeed, async_release_feed
-from .snapshot import PanelIdentity, build_snapshot, field_metadata, node_for_circuit
+from .snapshot import (
+    PanelIdentity,
+    build_snapshot,
+    circuit_is_switchable,
+    field_metadata,
+    node_for_circuit,
+)
 from .span_client.backend import RELAY_PROPERTY
 
 _LOGGER = logging.getLogger(__name__)
@@ -259,7 +265,11 @@ class SpanCloudClient:
                     command, PublishOutcome(PublishState.FAILED, None, state, detail="vetoed")
                 )
                 raise
-        if self._feed.readings.get(key) == state:
+        if self._feed.schema is None or not circuit_is_switchable(self._feed.schema, circuit_id):
+            outcome = PublishOutcome(
+                PublishState.FAILED, key, state, detail="this breaker is not switchable"
+            )
+        elif self._feed.readings.get(key) == state:
             outcome = PublishOutcome(PublishState.CONFIRMED, key, state, no_op=True)
         else:
             try:

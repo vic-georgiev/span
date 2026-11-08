@@ -124,6 +124,25 @@ def circuit_id_for(node_id: str) -> str:
     return node_id.removeprefix("circuit-")
 
 
+def _switchable(specs: list[PropertySpec]) -> bool:
+    """Whether Home Assistant may switch this breaker.
+
+    It needs a relay the snapshot resolved, and a breaker the panel knows the
+    rating of. A breaker without one is not a load SPAN has commissioned: on a
+    MAIN 40 the two-pole on spaces 46/48 is the battery's, which the SPAN app
+    shows as reserved and offers no switch for. Turning a battery's breaker off
+    from a dashboard is not a control to hand out on a guess.
+    """
+    has_relay = any(spec.property_id == RELAY_PROPERTY for spec in specs)
+    return has_relay and any(spec.breaker_amps for spec in specs)
+
+
+def circuit_is_switchable(schema: PanelSchema, circuit_id: str) -> bool:
+    """Answer the same for one circuit, for the control path to check again."""
+    node = node_for_circuit(circuit_id)
+    return _switchable([spec for spec in schema.properties.values() if spec.node_id == node])
+
+
 def node_for_circuit(circuit_id: str) -> str:
     """Return the cloud node id for a circuit id."""
     return f"circuit-{circuit_id}"
@@ -143,7 +162,6 @@ def build_snapshot(
     circuits: dict[str, SpanCircuitSnapshot] = {}
     for node_id, specs in sorted(circuit_nodes.items()):
         first = specs[0]
-        props = {spec.property_id for spec in specs}
         circuit_id = circuit_id_for(node_id)
         relay = readings.get(f"{node_id}/{RELAY_PROPERTY}", UNKNOWN)
         circuits[circuit_id] = SpanCircuitSnapshot(
@@ -155,7 +173,7 @@ def build_snapshot(
             consumed_energy_wh=_wh(energy_kwh(f"{node_id}/power")),
             tabs=sorted(first.spaces),
             priority=UNKNOWN,
-            is_user_controllable=RELAY_PROPERTY in props,
+            is_user_controllable=_switchable(specs),
             is_sheddable=False,
             is_never_backup=False,
             current_a=_float(readings, f"{node_id}/current"),
