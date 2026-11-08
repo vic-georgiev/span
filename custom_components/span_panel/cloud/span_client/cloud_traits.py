@@ -59,6 +59,17 @@ TRAIT_CIRCUIT = 15
 TRAIT_LABEL = 16
 TRAIT_SPACE = 17
 TRAIT_SWITCH = 31
+TRAIT_FEEDER = 21
+TRAIT_SERVICE_LIMIT = 32
+
+# Trait 1/21 kinds (its field 2): the main breaker, and the feed-through lugs.
+FEEDER_MAIN_BREAKER = 3
+# Trait 1/32 roles (its field 5). 1 is the service limit PowerUp holds the panel
+# to (150 A on a MAIN 16, 200 A on a MAIN 40). 4 appears only on the site with
+# the Powerwall 3, at 47917 mA: 11.5 kW at 240 V, the battery's continuous
+# rating, so it is the most the panel can draw while the battery runs the house.
+LIMIT_SERVICE = 1
+LIMIT_BATTERY = 4
 
 # SwitchState. Only CLOSED means the circuit is energized; OPEN and the two
 # not-a-state values are all "not energized", but only OPEN is *known* to be.
@@ -104,6 +115,14 @@ class CircuitInfo:
     # How to address this circuit's relay, when the snapshot told us. `None`
     # means no relay control is offered for this circuit.
     switch: SwitchTarget | None = None
+    # Load management from the same 1/31 entry, as the SPAN app shows it. The
+    # backup priority is what the app calls battery priority: 4 "stay on in an
+    # outage", 3 "stay on until the battery reaches its threshold", 2 "not
+    # available in an outage"; None when the entry carries no backup block.
+    # The PowerUp rank orders which breakers PowerUp turns off first when the
+    # service limit is near; equal ranks are a tie the app breaks by rating.
+    backup_priority: int | None = None
+    powerup_rank: int | None = None
 
     @property
     def display_name(self) -> str:
@@ -178,6 +197,7 @@ def _circuit_from(
 ) -> CircuitInfo | None:
     """Build a CircuitInfo by following trait 1/15's refs to its label and spaces."""
     relay_closed, switch = _switch_for(instance, traits)
+    priority, rank = _load_management_for(instance, traits)
     inner = body.get_msg(1)
     if inner is None:
         return None
@@ -188,7 +208,13 @@ def _circuit_from(
         if position is not None:
             break
     if position is None:
-        return CircuitInfo(instance_id=instance, relay_closed=relay_closed, switch=switch)
+        return CircuitInfo(
+            instance_id=instance,
+            relay_closed=relay_closed,
+            switch=switch,
+            backup_priority=priority,
+            powerup_rank=rank,
+        )
 
     refs = _trait_refs(position)
     label_ids = [i for vendor, trait, i in refs if (vendor, trait) == (VENDOR_SPAN, TRAIT_LABEL)]
@@ -215,7 +241,84 @@ def _circuit_from(
         breaker_amps=amps,
         relay_closed=relay_closed,
         switch=switch,
+        backup_priority=priority,
+        powerup_rank=rank,
     )
+
+
+def _load_management_for(
+    instance: int,
+    traits: dict[tuple[int, int, int], TraitEntry],
+) -> tuple[int | None, int | None]:
+    """Backup priority and PowerUp rank from the 1/31 entry at `instance`.
+
+    The entry's field 2 is its load-management config: #2 the backup block
+    (#1 priority), #22 the PowerUp rank. Read only when the entry points back at
+    this circuit, for the same reason the relay is.
+    """
+    inner = _trait_inner(traits, TRAIT_SWITCH, instance)
+    if inner is None or (VENDOR_SPAN, TRAIT_CIRCUIT, instance) not in _trait_refs(inner):
+        return None, None
+    config = _msg_or_none(inner, 2)
+    if config is None:
+        return None, None
+    backup = _msg_or_none(config, 2)
+    priority = _int_or_none(backup, 1)
+    return (priority or None), _int_or_none(config, 22)
+
+
+@dataclass(frozen=True)
+class PanelTraits:
+    """Panel-wide facts from the trait snapshot, all in amps."""
+
+    main_breaker_amps: int | None = None
+    service_limit_a: float | None = None
+    battery_limit_a: float | None = None
+
+
+def parse_panel_traits(raw: bytes) -> PanelTraits:
+    """The main breaker and PowerUp limits from one panel's trait snapshot.
+
+    Never raises: an unreadable snapshot is a panel with nothing to say.
+    """
+    if not raw:
+        return PanelTraits()
+    try:
+        traits = _index_traits(raw)
+    except (ProtoError, ValueError):
+        return PanelTraits()
+
+    breaker: int | None = None
+    limits: dict[int, float] = {}
+    for (vendor, trait, _instance), entry in sorted(traits.items()):
+        if vendor != VENDOR_SPAN or trait not in (TRAIT_FEEDER, TRAIT_SERVICE_LIMIT):
+            continue
+        inner = _msg_or_none(entry.value, 1)
+        if inner is None:
+            continue
+        if trait == TRAIT_FEEDER:
+            if _int_or_none(inner, 2) == FEEDER_MAIN_BREAKER and breaker is None:
+                breaker = _int_or_none(inner, 4)
+            continue
+        role = _int_or_none(inner, 5)
+        milliamps = _int_or_none(_msg_or_none(inner, 2), 1)
+        if role is not None and milliamps and role not in limits:
+            limits[role] = milliamps / 1000
+    return PanelTraits(
+        main_breaker_amps=breaker or None,
+        service_limit_a=limits.get(LIMIT_SERVICE),
+        battery_limit_a=limits.get(LIMIT_BATTERY),
+    )
+
+
+def _int_or_none(msg: Message | None, no: int) -> int | None:
+    """`get_int_opt` that tolerates a missing message and a non-varint field."""
+    if msg is None:
+        return None
+    try:
+        return msg.get_int_opt(no)
+    except (ProtoError, ValueError):
+        return None
 
 
 def _switch_for(

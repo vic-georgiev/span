@@ -12,7 +12,13 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from span_panel_api import SpanCircuitSnapshot, SpanPanelSnapshot
 
 from .adoption import AdoptedSelect, create_adopted_selects
-from .const import DOMAIN, USE_CIRCUIT_NUMBERS, CircuitPriority
+from .const import (
+    API_VERSION_CLOUD,
+    CONF_API_VERSION,
+    DOMAIN,
+    USE_CIRCUIT_NUMBERS,
+    CircuitPriority,
+)
 from .control_gate import ControlMode
 from .coordinator import SpanPanelCoordinator
 from .entity import SpanPanelEntity
@@ -85,6 +91,11 @@ class SpanPanelSelectEntityDescriptionWrapper:
         self.options_fn = options_fn
         self.current_option_fn = current_option_fn
         self.select_option_fn = select_option_fn
+
+
+def _never(_circuit: SpanCircuitSnapshot) -> bool:
+    """Qualify no circuit for a priority select."""
+    return False
 
 
 CIRCUIT_PRIORITY_DESCRIPTION: Final = SpanPanelSelectEntityDescriptionWrapper(
@@ -364,12 +375,18 @@ async def async_setup_entry(
     # Get device name from config entry data
     device_name = config_entry.data.get("device_name", config_entry.title)
 
+    # Over SPAN's cloud the priority can be read but not yet written, so a
+    # select would only ever fail; the priority is on the circuit's attributes.
+    qualifies: Callable[[SpanCircuitSnapshot], bool] = circuit_has_a_priority_select
+    if config_entry.data.get(CONF_API_VERSION) == API_VERSION_CLOUD:
+        qualifies = _never
+
     remove_withdrawn_controls(
         er.async_get(hass),
         config_entry.entry_id,
         "select",
         snapshot.circuits,
-        circuit_has_a_priority_select,
+        qualifies,
         lambda circuit_id: build_select_unique_id_for_entry(
             coordinator, snapshot, circuit_id, device_name
         ),
@@ -378,7 +395,7 @@ async def async_setup_entry(
     entities: list[SpanPanelCircuitsSelect | AdoptedSelect] = []
 
     for circuit_id, circuit_data in snapshot.circuits.items():
-        if not circuit_has_a_priority_select(circuit_data):
+        if not qualifies(circuit_data):
             continue
         entities.append(
             SpanPanelCircuitsSelect(

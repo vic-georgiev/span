@@ -18,9 +18,17 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import re
 
-from span_panel_api import FieldMetadata, SpanCircuitSnapshot, SpanPanelSnapshot
+from span_panel_api import FieldMetadata, SpanCircuitSnapshot, SpanPanelSnapshot, SpanPcsSnapshot
 
-from .span_client.backend import RELAY_PROPERTY, SITE_NODE
+from .span_client.backend import (
+    CONFIG_BACKUP_PRIORITY,
+    CONFIG_BATTERY_LIMIT,
+    CONFIG_MAIN_BREAKER,
+    CONFIG_POWERUP_RANK,
+    CONFIG_SERVICE_LIMIT,
+    RELAY_PROPERTY,
+    SITE_NODE,
+)
 from .span_client.models import NodeKind, PanelSchema, PropertySpec
 
 UNKNOWN = "UNKNOWN"
@@ -39,20 +47,30 @@ _UNRESOLVED_PANEL_FIELDS = (
     "feedthrough_energy_consumed_wh",
     "feedthrough_energy_produced_wh",
     "main_meter_energy_produced_wh",
-    "main_breaker_rating_a",
     "grid_islandable",
 )
 
-# Circuit fields likewise. Priority and always-on exist in SPAN's cloud schema
-# but are not decoded yet; produced energy is not requested from the history RPC.
+# Circuit fields likewise. Always-on is somewhere in SPAN's configuration but
+# not identified yet; produced energy is not requested from the history RPC.
 _UNRESOLVED_CIRCUIT_FIELDS = (
-    "priority",
-    "is_sheddable",
     "is_never_backup",
     "always_on",
     "relay_requester",
     "produced_energy_wh",
 )
+
+# PowerUp is SPAN's name for the panel's Power Control System, so it lands where
+# the official model keeps one. What the cloud does not say is whether PowerUp is
+# limiting right now, or which limit is binding.
+_UNRESOLVED_PCS_FIELDS = ("active", "binding_constraint")
+
+# SPAN's backup priority -> the official CircuitPriority member name. The labels
+# are the SPAN app's, checked circuit by circuit against both panels.
+_PRIORITY_BY_BACKUP = {
+    4: "NEVER",  # "Stay on in an outage"
+    3: "SOC_THRESHOLD",  # "Stay on until 50% battery"
+    2: "OFF_GRID",  # "Not available in an outage"
+}
 
 # Cloud site flow -> (snapshot field, sign). The snapshot keeps the panel's own
 # wire frame, in which grid is negative while importing (the grid sensor negates
@@ -105,6 +123,33 @@ def _float(readings: Mapping[str, str], key: str) -> float | None:
         return float(raw)
     except ValueError:
         return None
+
+
+def _int(readings: Mapping[str, str], key: str) -> int | None:
+    value = _float(readings, key)
+    return None if value is None else int(value)
+
+
+def _priority(readings: Mapping[str, str], node_id: str) -> str:
+    backup = _int(readings, f"{node_id}/{CONFIG_BACKUP_PRIORITY}")
+    return _PRIORITY_BY_BACKUP.get(backup, UNKNOWN) if backup is not None else UNKNOWN
+
+
+def _pcs(readings: Mapping[str, str]) -> SpanPcsSnapshot | None:
+    """PowerUp's limits, or None for a panel whose snapshot names none.
+
+    The enforced limit is taken to be the service limit, which is what binds
+    while the grid is up. The battery limit, on the site with the Powerwall, is
+    the one that binds while it is not.
+    """
+    service = _float(readings, f"panel/{CONFIG_SERVICE_LIMIT}")
+    if service is None:
+        return None
+    return SpanPcsSnapshot(
+        import_limit_a=service,
+        feed_import_limit_a=service,
+        off_grid_import_limit_a=_float(readings, f"panel/{CONFIG_BATTERY_LIMIT}"),
+    )
 
 
 def _wh(total_kwh: float | None) -> float | None:
@@ -164,6 +209,8 @@ def build_snapshot(
         first = specs[0]
         circuit_id = circuit_id_for(node_id)
         relay = readings.get(f"{node_id}/{RELAY_PROPERTY}", UNKNOWN)
+        priority = _priority(readings, node_id)
+        rank = _int(readings, f"{node_id}/{CONFIG_POWERUP_RANK}")
         circuits[circuit_id] = SpanCircuitSnapshot(
             circuit_id=circuit_id,
             name=first.node_name or f"Circuit {circuit_id}",
@@ -172,12 +219,16 @@ def build_snapshot(
             produced_energy_wh=None,
             consumed_energy_wh=_wh(energy_kwh(f"{node_id}/power")),
             tabs=sorted(first.spaces),
-            priority=UNKNOWN,
+            priority=priority,
             is_user_controllable=_switchable(specs),
-            is_sheddable=False,
+            is_sheddable=priority in ("SOC_THRESHOLD", "OFF_GRID"),
             is_never_backup=False,
             current_a=_float(readings, f"{node_id}/current"),
             breaker_rating_a=float(first.breaker_amps) if first.breaker_amps else None,
+            # A circuit with no rank is one SPAN gave none, not one PowerUp
+            # leaves alone; the app lists it last.
+            pcs_managed=True if rank is not None else None,
+            pcs_priority=rank,
         )
 
     # The main feed is a metered instance that is not a branch circuit; the
@@ -225,6 +276,8 @@ def build_snapshot(
         vendor_name="SPAN",
         model=identity.model,
         circuits=circuits,
+        main_breaker_rating_a=_int(readings, f"panel/{CONFIG_MAIN_BREAKER}"),
+        pcs=_pcs(readings),
         power_flow_grid=flow("grid"),
         power_flow_site=flow("home"),
     )
@@ -234,6 +287,7 @@ CLOUD_GAP_PATHS = frozenset(
     ["panel.feedthrough_power_w"]
     + [f"panel.{name}" for name in _UNRESOLVED_PANEL_FIELDS]
     + [f"circuit.{name}" for name in _UNRESOLVED_CIRCUIT_FIELDS]
+    + [f"pcs.{name}" for name in _UNRESOLVED_PCS_FIELDS]
 )
 """Field paths the cloud path declares unresolved: known gaps, not defects."""
 
@@ -252,6 +306,10 @@ def field_metadata(
         "circuit.consumed_energy_wh": FieldMetadata("Wh", "float"),
         "circuit.relay_state": FieldMetadata(None, "enum"),
         "circuit.breaker_rating_a": FieldMetadata("A", "float"),
+        "circuit.priority": FieldMetadata(None, "enum"),
+        "circuit.is_sheddable": FieldMetadata(None, "boolean"),
+        "panel.main_breaker_rating_a": FieldMetadata("A", "integer"),
+        "pcs.import_limit_a": FieldMetadata("A", "float"),
     }
     if "panel/feedthrough_power" in schema_keys:
         meta["panel.feedthrough_power_w"] = FieldMetadata("W", "float")
@@ -264,4 +322,6 @@ def field_metadata(
         meta[f"panel.{name}"] = FieldMetadata(None, "string", resolved=False)
     for name in _UNRESOLVED_CIRCUIT_FIELDS:
         meta[f"circuit.{name}"] = FieldMetadata(None, "string", resolved=False)
+    for name in _UNRESOLVED_PCS_FIELDS:
+        meta[f"pcs.{name}"] = FieldMetadata(None, "string", resolved=False)
     return meta

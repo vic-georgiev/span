@@ -50,7 +50,7 @@ from pathlib import Path
 from . import cloud_ably, cloud_auth, cloud_commands, cloud_grpc, cloud_history
 from .cloud_pb import Message, ProtoError, field_message, field_string, field_varint, parse
 from .cloud_telemetry import CircuitSample, Frame, decode_frame
-from .cloud_traits import CircuitInfo, parse_trait_snapshot
+from .cloud_traits import CircuitInfo, PanelTraits, parse_panel_traits, parse_trait_snapshot
 from .models import DataType, EnergySample, NodeKind, PanelSchema, PropertySpec, Reading
 
 # Backend callbacks (previously defined on the daemon's backend Protocol).
@@ -164,6 +164,14 @@ _SITE_HZ_FLOWS = {"frequency"}
 # an HA switch with those payloads, so nothing downstream needs to learn a new
 # word. UNKNOWN is a state the panel reports, never a command.
 RELAY_PROPERTY = "relay"
+
+# Configuration read from the trait snapshot and published as readings, beside
+# the measurements. Breaker and limits in amps; priority and rank as SPAN's ints.
+CONFIG_MAIN_BREAKER = "main_breaker_amps"
+CONFIG_SERVICE_LIMIT = "service_limit_a"
+CONFIG_BATTERY_LIMIT = "battery_limit_a"
+CONFIG_BACKUP_PRIORITY = "backup_priority"
+CONFIG_POWERUP_RANK = "powerup_rank"
 RELAY_STATES = ("OPEN", "CLOSED", "UNKNOWN")
 
 # The property a node's energy is the energy *of* — see `energy_samples`.
@@ -1509,6 +1517,30 @@ class CloudBackend:
             )
         )
 
+    def _emit_config_readings(self, circuits: dict[int, CircuitInfo], panel: PanelTraits) -> None:
+        """Publish how the panel is configured, on every snapshot re-read.
+
+        Configuration rides the reading path rather than the schema because it
+        changes while the stream runs: a priority moved in the SPAN app reaches
+        Home Assistant at the next re-read, with no reload. A value the snapshot
+        does not carry is not published, so it stays unknown downstream.
+        """
+        if self._on_reading is None:
+            return
+        now = time.time()
+        values: list[tuple[str, object]] = [
+            (f"panel/{CONFIG_MAIN_BREAKER}", panel.main_breaker_amps),
+            (f"panel/{CONFIG_SERVICE_LIMIT}", panel.service_limit_a),
+            (f"panel/{CONFIG_BATTERY_LIMIT}", panel.battery_limit_a),
+        ]
+        for info in circuits.values():
+            node = _circuit_node(info.instance_id)
+            values.append((f"{node}/{CONFIG_BACKUP_PRIORITY}", info.backup_priority))
+            values.append((f"{node}/{CONFIG_POWERUP_RANK}", info.powerup_rank))
+        for key, value in values:
+            if value is not None:
+                self._on_reading(Reading(key=key, value=str(value), timestamp=now))
+
     def _request_refresh(self, delay: float) -> None:
         """Ask the refresh loop to re-read the trait snapshot in `delay` seconds."""
 
@@ -1755,13 +1787,15 @@ class CloudBackend:
         switch state, so without this the value would only move when we ourselves
         commanded it.
         """
-        circuits = parse_trait_snapshot(self.subscribe(channel))
+        raw = self.subscribe(channel)
+        circuits = parse_trait_snapshot(raw)
         if circuits:
             self._circuits = circuits
             if announce:
                 for info in circuits.values():
                     if info.switch is not None:
                         self._emit_relay_reading(info)
+            self._emit_config_readings(circuits, parse_panel_traits(raw))
         # The subscribe answered, so there is nothing left to wait for: release
         # the schema even if the snapshot named no circuits.
         self._label_deadline = 0.0
@@ -1974,6 +2008,7 @@ class SiteStream(CloudBackend):
                     for info in circuits.values():
                         if info.switch is not None:
                             panel._emit_relay_reading(info)
+                panel._emit_config_readings(circuits, parse_panel_traits(parts.get(key, b"")))
             panel._label_deadline = 0.0
 
     def _handle_frame(self, raw: bytes) -> None:

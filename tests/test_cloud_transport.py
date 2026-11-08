@@ -28,6 +28,16 @@ from custom_components.span_panel.cloud.snapshot import (
     field_metadata,
 )
 from custom_components.span_panel.cloud.span_client.backend import PanelInfo, SiteInfo
+from custom_components.span_panel.cloud.span_client.cloud_pb import (
+    field_bytes,
+    field_message,
+    field_string,
+    field_varint,
+)
+from custom_components.span_panel.cloud.span_client.cloud_traits import (
+    parse_panel_traits,
+    parse_trait_snapshot,
+)
 from custom_components.span_panel.cloud.span_client.models import (
     DataType,
     EnergySample,
@@ -306,10 +316,113 @@ def test_fields_the_cloud_does_not_carry_are_declared_unresolved() -> None:
 
     assert meta["panel.door_state"].resolved is False
     assert meta["panel.wlan_link"].resolved is False
-    assert meta["circuit.priority"].resolved is False
+    assert meta["circuit.always_on"].resolved is False
+    assert meta["circuit.priority"].resolved is True
+    assert meta["pcs.active"].resolved is False
     assert meta["circuit.instant_power_w"].resolved is True
     assert meta["panel.power_flow_grid"].resolved is True
     assert "panel.power_flow_battery" not in meta  # no battery: nothing to say
+
+
+def _trait_ref(trait: int, instance: int) -> bytes:
+    return field_message(1, field_varint(1, 1) + field_varint(3, trait)) + field_message(
+        2, field_varint(1, instance)
+    )
+
+
+def _trait(trait: int, instance: int, body: bytes) -> bytes:
+    """One snapshot entry, its value wrapped the way the cloud wraps it."""
+    return field_message(
+        2,
+        field_message(1, field_varint(1, 1) + field_varint(2, 4) + field_varint(3, trait))
+        + field_message(2, field_varint(1, instance))
+        + field_message(3, field_bytes(2, field_message(1, body))),
+    )
+
+
+def _load_management(instance: int, config: bytes) -> bytes:
+    return _trait(
+        31,
+        instance,
+        field_message(1, _trait_ref(15, instance)) + field_message(2, config) + field_varint(3, 3),
+    )
+
+
+def _main_40_traits() -> bytes:
+    """Build the MAIN 40's load-management and feeder traits, field for field as SPAN sends them."""
+    entries = [
+        _trait(15, 22, field_varint(2, 1)),  # Disposal
+        _trait(15, 23, field_varint(2, 1)),  # Irrigation
+        _trait(15, 30, field_varint(2, 1)),  # Hot tub
+        # backup priority 3, PowerUp rank 47
+        _load_management(
+            22, field_varint(1, 2) + field_message(2, field_varint(1, 3)) + field_varint(22, 47)
+        ),
+        # no backup block at all
+        _load_management(23, field_varint(1, 2) + field_varint(22, 42)),
+        _load_management(
+            30, field_varint(1, 2) + field_message(2, field_varint(1, 2)) + field_varint(22, 16)
+        ),
+        # the main breaker, then the feed-through lugs
+        _trait(21, 2, field_varint(2, 3) + field_varint(4, 200) + field_varint(5, 200)),
+        _trait(21, 41, field_varint(2, 4) + field_varint(7, 5)),
+        # PowerUp: the service limit, and the Powerwall's 11.5 kW at 240 V
+        _trait(32, 1, field_message(2, field_varint(1, 200_000)) + field_varint(5, 1)),
+        _trait(32, 4, field_message(2, field_varint(1, 47_917)) + field_varint(5, 4)),
+    ]
+    return field_message(1, field_message(1, field_string(1, "gw-40")) + b"".join(entries))
+
+
+def test_the_trait_snapshot_yields_priorities_ranks_and_limits() -> None:
+    raw = _main_40_traits()
+
+    circuits = parse_trait_snapshot(raw)
+    assert (circuits[22].backup_priority, circuits[22].powerup_rank) == (3, 47)
+    assert (circuits[23].backup_priority, circuits[23].powerup_rank) == (None, 42)
+    assert (circuits[30].backup_priority, circuits[30].powerup_rank) == (2, 16)
+
+    panel = parse_panel_traits(raw)
+    assert panel.main_breaker_amps == 200  # not the lugs
+    assert panel.service_limit_a == 200.0
+    assert panel.battery_limit_a == 47.917
+
+
+def test_priorities_and_powerup_reach_the_snapshot() -> None:
+    schema, readings = PANELS[SERIAL_40]
+    readings = {
+        **readings,
+        "circuit-21/backup_priority": "4",
+        "circuit-21/powerup_rank": "37",
+        "circuit-22/backup_priority": "3",
+        "panel/main_breaker_amps": "200",
+        "panel/service_limit_a": "200.0",
+        "panel/battery_limit_a": "47.917",
+    }
+    snapshot = build_snapshot(
+        PanelIdentity(SERIAL_40, "MAIN 40"), schema, readings, lambda _k: None
+    )
+
+    kitchen, condenser = snapshot.circuits["21"], snapshot.circuits["22"]
+    assert (kitchen.priority, kitchen.is_sheddable) == ("NEVER", False)
+    assert (condenser.priority, condenser.is_sheddable) == ("SOC_THRESHOLD", True)
+    assert (kitchen.pcs_managed, kitchen.pcs_priority) == (True, 37)
+    # SPAN gave the condenser no rank here, which is not the same as unmanaged.
+    assert (condenser.pcs_managed, condenser.pcs_priority) == (None, None)
+    assert snapshot.main_breaker_rating_a == 200
+    assert snapshot.pcs is not None
+    assert snapshot.pcs.import_limit_a == 200.0
+    assert snapshot.pcs.feed_import_limit_a == 200.0
+    assert snapshot.pcs.off_grid_import_limit_a == 47.917
+    assert snapshot.pcs.active is None
+
+
+def test_a_panel_without_powerup_limits_has_no_pcs() -> None:
+    schema, readings = PANELS[SERIAL_40]
+    snapshot = build_snapshot(
+        PanelIdentity(SERIAL_40, "MAIN 40"), schema, readings, lambda _k: None
+    )
+    assert snapshot.pcs is None
+    assert snapshot.circuits["21"].priority == "UNKNOWN"
 
 
 async def test_two_panels_on_one_site_share_one_stream(hass: HomeAssistant) -> None:
@@ -391,7 +504,8 @@ async def test_two_panels_on_one_site_share_one_stream(hass: HomeAssistant) -> N
             and issue.translation_key in ("cloud_fields_unavailable", "schema_field_unresolved")
         ]
         assert sorted(i.translation_key for i in issues) == ["cloud_fields_unavailable"] * 2
-        assert "circuit.priority" in issues[0].translation_placeholders["fields"]
+        assert "circuit.relay_requester" in issues[0].translation_placeholders["fields"]
+        assert "circuit.priority" not in issues[0].translation_placeholders["fields"]
 
         assert await hass.config_entries.async_unload(entry_40.entry_id)
         assert not FakeStream.backends[SERIAL_40].stopped  # the MAIN 16 still reads it
