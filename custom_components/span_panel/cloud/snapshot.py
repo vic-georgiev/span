@@ -28,6 +28,7 @@ from .span_client.backend import (
     CONFIG_MAIN_BREAKER,
     CONFIG_POWERUP_RANK,
     CONFIG_SERVICE_LIMIT,
+    CONFIG_SHED_POLICY,
     CONFIG_WIFI_LINK,
     RELAY_PROPERTY,
     SITE_NODE,
@@ -50,11 +51,9 @@ _UNRESOLVED_PANEL_FIELDS = (
     "grid_islandable",
 )
 
-# Circuit fields likewise. Always-on is somewhere in SPAN's configuration but
-# not identified yet; produced energy is not requested from the history RPC.
+# Circuit fields likewise. Produced energy is not requested from the history RPC.
 _UNRESOLVED_CIRCUIT_FIELDS = (
     "is_never_backup",
-    "always_on",
     "relay_requester",
     "produced_energy_wh",
 )
@@ -63,6 +62,10 @@ _UNRESOLVED_CIRCUIT_FIELDS = (
 # the official model keeps one. What the cloud does not say is whether PowerUp is
 # limiting right now, or which limit is binding.
 _UNRESOLVED_PCS_FIELDS = ("active", "binding_constraint")
+
+# The shed policy SPAN gives the breakers it never turns off: the one set to
+# "always on" in the app, and the battery's own breaker.
+SHED_POLICY_ALWAYS_ON = 1
 
 # SPAN's backup priority -> the official CircuitPriority member name. The labels
 # are the SPAN app's, checked circuit by circuit against both panels.
@@ -211,6 +214,7 @@ def build_snapshot(
         relay = readings.get(f"{node_id}/{RELAY_PROPERTY}", UNKNOWN)
         priority = _priority(readings, node_id)
         rank = _int(readings, f"{node_id}/{CONFIG_POWERUP_RANK}")
+        always_on = _int(readings, f"{node_id}/{CONFIG_SHED_POLICY}") == SHED_POLICY_ALWAYS_ON
         circuits[circuit_id] = SpanCircuitSnapshot(
             circuit_id=circuit_id,
             name=first.node_name or f"Circuit {circuit_id}",
@@ -220,9 +224,12 @@ def build_snapshot(
             consumed_energy_wh=_wh(energy_kwh(f"{node_id}/power")),
             tabs=sorted(first.spaces),
             priority=priority,
-            is_user_controllable=_switchable(specs),
+            # As in SPAN's own model: an always-on breaker is not the user's to
+            # switch, so it gets no switch.
+            is_user_controllable=_switchable(specs) and not always_on,
             is_sheddable=priority in ("SOC_THRESHOLD", "OFF_GRID"),
             is_never_backup=False,
+            always_on=always_on,
             current_a=_float(readings, f"{node_id}/current"),
             breaker_rating_a=float(first.breaker_amps) if first.breaker_amps else None,
             # A circuit with no rank is one SPAN gave none, not one PowerUp
@@ -308,6 +315,7 @@ def field_metadata(
         "circuit.breaker_rating_a": FieldMetadata("A", "float"),
         "circuit.priority": FieldMetadata(None, "enum"),
         "circuit.is_sheddable": FieldMetadata(None, "boolean"),
+        "circuit.always_on": FieldMetadata(None, "boolean"),
         "panel.main_breaker_rating_a": FieldMetadata("A", "integer"),
         "pcs.import_limit_a": FieldMetadata("A", "float"),
         "panel.eth0_link": FieldMetadata(None, "boolean"),

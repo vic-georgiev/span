@@ -316,7 +316,8 @@ def test_fields_the_cloud_does_not_carry_are_declared_unresolved() -> None:
 
     assert meta["panel.door_state"].resolved is False
     assert meta["panel.wlan_link"].resolved is True
-    assert meta["circuit.always_on"].resolved is False
+    assert meta["circuit.always_on"].resolved is True
+    assert meta["circuit.is_never_backup"].resolved is False
     assert meta["circuit.priority"].resolved is True
     assert meta["pcs.active"].resolved is False
     assert meta["circuit.instant_power_w"].resolved is True
@@ -358,8 +359,8 @@ def _main_40_traits() -> bytes:
         _load_management(
             22, field_varint(1, 2) + field_message(2, field_varint(1, 3)) + field_varint(22, 47)
         ),
-        # no backup block at all
-        _load_management(23, field_varint(1, 2) + field_varint(22, 42)),
+        # no backup block at all, and set to always on
+        _load_management(23, field_varint(1, 1) + field_varint(22, 42)),
         _load_management(
             30, field_varint(1, 2) + field_message(2, field_varint(1, 2)) + field_varint(22, 16)
         ),
@@ -383,6 +384,7 @@ def test_the_trait_snapshot_yields_priorities_ranks_and_limits() -> None:
     circuits = parse_trait_snapshot(raw)
     assert (circuits[22].backup_priority, circuits[22].powerup_rank) == (3, 47)
     assert (circuits[23].backup_priority, circuits[23].powerup_rank) == (None, 42)
+    assert (circuits[22].shed_policy, circuits[23].shed_policy) == (2, 1)
     assert (circuits[30].backup_priority, circuits[30].powerup_rank) == (2, 16)
 
     panel = parse_panel_traits(raw)
@@ -399,6 +401,8 @@ def test_priorities_and_powerup_reach_the_snapshot() -> None:
         "circuit-21/backup_priority": "4",
         "circuit-21/powerup_rank": "37",
         "circuit-22/backup_priority": "3",
+        "circuit-21/shed_policy": "1",
+        "circuit-22/shed_policy": "2",
         "panel/main_breaker_amps": "200",
         "panel/service_limit_a": "200.0",
         "panel/battery_limit_a": "47.917",
@@ -413,6 +417,9 @@ def test_priorities_and_powerup_reach_the_snapshot() -> None:
     assert (kitchen.priority, kitchen.is_sheddable) == ("NEVER", False)
     assert (condenser.priority, condenser.is_sheddable) == ("SOC_THRESHOLD", True)
     assert (kitchen.pcs_managed, kitchen.pcs_priority) == (True, 37)
+    assert (kitchen.always_on, condenser.always_on) == (True, False)
+    assert not kitchen.is_user_controllable  # always on: no switch
+    assert condenser.is_user_controllable
     # SPAN gave the condenser no rank here, which is not the same as unmanaged.
     assert (condenser.pcs_managed, condenser.pcs_priority) == (None, None)
     assert snapshot.main_breaker_rating_a == 200

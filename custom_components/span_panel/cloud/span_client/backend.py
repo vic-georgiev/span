@@ -172,6 +172,7 @@ CONFIG_SERVICE_LIMIT = "service_limit_a"
 CONFIG_BATTERY_LIMIT = "battery_limit_a"
 CONFIG_BACKUP_PRIORITY = "backup_priority"
 CONFIG_POWERUP_RANK = "powerup_rank"
+CONFIG_SHED_POLICY = "shed_policy"
 # Gateway links, "1" connected or "0" not.
 CONFIG_ETHERNET_LINK = "ethernet_link"
 CONFIG_WIFI_LINK = "wifi_link"
@@ -1547,6 +1548,7 @@ class CloudBackend:
             node = _circuit_node(info.instance_id)
             values.append((f"{node}/{CONFIG_BACKUP_PRIORITY}", info.backup_priority))
             values.append((f"{node}/{CONFIG_POWERUP_RANK}", info.powerup_rank))
+            values.append((f"{node}/{CONFIG_SHED_POLICY}", info.shed_policy))
         for key, value in values:
             if value is not None:
                 self._on_reading(Reading(key=key, value=str(value), timestamp=now))

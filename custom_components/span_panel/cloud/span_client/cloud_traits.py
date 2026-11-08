@@ -134,6 +134,9 @@ class CircuitInfo:
     # service limit is near; equal ranks are a tie the app breaks by rating.
     backup_priority: int | None = None
     powerup_rank: int | None = None
+    # Shed policy: 1 on the breakers SPAN never turns off (the app's "always
+    # on", and the battery's own breaker), 2 on every other.
+    shed_policy: int | None = None
 
     @property
     def display_name(self) -> str:
@@ -208,7 +211,7 @@ def _circuit_from(
 ) -> CircuitInfo | None:
     """Build a CircuitInfo by following trait 1/15's refs to its label and spaces."""
     relay_closed, switch = _switch_for(instance, traits)
-    priority, rank = _load_management_for(instance, traits)
+    priority, rank, policy = _load_management_for(instance, traits)
     inner = body.get_msg(1)
     if inner is None:
         return None
@@ -225,6 +228,7 @@ def _circuit_from(
             switch=switch,
             backup_priority=priority,
             powerup_rank=rank,
+            shed_policy=policy,
         )
 
     refs = _trait_refs(position)
@@ -254,28 +258,29 @@ def _circuit_from(
         switch=switch,
         backup_priority=priority,
         powerup_rank=rank,
+        shed_policy=policy,
     )
 
 
 def _load_management_for(
     instance: int,
     traits: dict[tuple[int, int, int], TraitEntry],
-) -> tuple[int | None, int | None]:
-    """Backup priority and PowerUp rank from the 1/31 entry at `instance`.
+) -> tuple[int | None, int | None, int | None]:
+    """Backup priority, PowerUp rank and shed policy from the 1/31 entry at `instance`.
 
-    The entry's field 2 is its load-management config: #2 the backup block
-    (#1 priority), #22 the PowerUp rank. Read only when the entry points back at
+    The entry's field 2 is its load-management config: #1 the shed policy, #2
+    the backup block (#1 priority), #22 the PowerUp rank. Read only when the entry points back at
     this circuit, for the same reason the relay is.
     """
     inner = _trait_inner(traits, TRAIT_SWITCH, instance)
     if inner is None or (VENDOR_SPAN, TRAIT_CIRCUIT, instance) not in _trait_refs(inner):
-        return None, None
+        return None, None, None
     config = _msg_or_none(inner, 2)
     if config is None:
-        return None, None
+        return None, None, None
     backup = _msg_or_none(config, 2)
     priority = _int_or_none(backup, 1)
-    return (priority or None), _int_or_none(config, 22)
+    return (priority or None), _int_or_none(config, 22), _int_or_none(config, 1)
 
 
 @dataclass(frozen=True)
