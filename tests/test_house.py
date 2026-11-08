@@ -20,6 +20,7 @@ from custom_components.span_panel.house import (
     OWN_SUPPLY,
     Feed,
     LoadedPanel,
+    aligned_feed_check,
     children,
     effective_feeds,
     feed_check,
@@ -235,3 +236,38 @@ async def test_a_lone_panel_is_not_asked(hass: HomeAssistant) -> None:
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert CONF_FEED not in entry.options
+
+
+# --- the check at one instant ---------------------------------------------------
+
+
+def test_the_check_matches_the_fed_panels_samples_to_the_upstreams_clock() -> None:
+    upstream = [(0.0, 200.0), (1.0, 202.0), (2.0, 204.0)]
+    fed = [(0.4, 195.0), (0.6, 196.0), (1.7, 199.0)]
+    check = aligned_feed_check(upstream, fed)
+    assert check is not None
+    # Each fed sample meets the upstream's sample nearest it in SPAN's time.
+    assert (check.at, check.expected_w, check.measured_w) == (1.7, 204.0, 199.0)
+    assert check.difference_w == 5.0
+    # 0.6 is nearer the upstream's 1.0 than its 0.0: (202-196 + 204-199) / 2.
+    assert check.average_difference_w == 5.5
+    assert check.pairs == 2
+
+
+def test_a_load_switching_between_frames_is_no_jump() -> None:
+    """A 2 kW load comes on at t=10.0; the two panels frame it at different times."""
+    upstream = [(9.0, 200.0), (9.6, 200.0), (10.6, 2200.0), (11.6, 2200.0)]
+    fed = [(8.3, 205.0), (9.3, 205.0), (10.3, 2205.0), (11.3, 2205.0)]
+    # Latest against latest: 200 (at 9.6) against 2205 (at 10.3) is a 2 kW gap
+    # that is not there. Matched in time, the transition itself is skipped.
+    check = aligned_feed_check(upstream, fed)
+    assert check is not None
+    assert (check.at, check.difference_w) == (11.3, -5.0)
+    assert check.average_difference_w == -5.0  # 9.3 and 11.3; never 10.3
+    assert check.pairs == 2
+
+
+def test_no_pair_across_a_gap_in_the_upstreams_stream() -> None:
+    upstream = [(0.0, 100.0), (30.0, 100.0)]
+    assert aligned_feed_check(upstream, [(14.0, 100.0), (15.0, 100.0)]) is None
+    assert aligned_feed_check([], [(1.0, 1.0), (2.0, 1.0)]) is None

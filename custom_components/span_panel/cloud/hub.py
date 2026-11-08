@@ -17,6 +17,7 @@ read and written on the loop.
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -55,6 +56,9 @@ ENERGY_STORE_VERSION = 1
 ENERGY_POLL_SECONDS = 60
 FIRST_ENERGY_POLL_SECONDS = 10
 ENERGY_SAVE_DELAY_SECONDS = 30
+# Samples kept per reading for aligning panels in time: about a minute at the
+# stream's one or two frames a second.
+HISTORY_SAMPLES = 120
 
 type FeedListener = Callable[[], None]
 
@@ -102,6 +106,26 @@ class PanelFeed:
     schema_ready: asyncio.Event = field(default_factory=asyncio.Event)
     users: int = 0
     store: Store[dict[str, Any]] | None = None
+    # The last minute or so of each numeric reading, stamped with SPAN's own
+    # frame time rather than when it arrived here: what lets two panels on
+    # separate streams be compared at the same instant (see `house`).
+    history: dict[str, deque[tuple[float, float]]] = field(default_factory=dict)
+
+    def recent(self, key: str) -> list[tuple[float, float]]:
+        """Return `(frame time, value)` for a reading's recent samples, oldest first."""
+        return list(self.history.get(key, ()))
+
+    @callback
+    def record(self, reading: Reading) -> None:
+        """Keep a numeric reading in its short history, in frame-time order."""
+        try:
+            value = float(reading.value)
+        except (TypeError, ValueError):
+            return
+        samples = self.history.setdefault(reading.key, deque(maxlen=HISTORY_SAMPLES))
+        if samples and reading.timestamp <= samples[-1][0]:
+            return  # a repeat or a late frame: the series only moves forward
+        samples.append((reading.timestamp, value))
 
     def energy_total(self, key: str) -> float | None:
         """Return the metered kWh total for a property key."""
@@ -258,6 +282,7 @@ class CloudSiteHub:
             feed = self.feeds[key]
             for reading in readings.values():
                 feed.readings[reading.key] = reading.value
+                feed.record(reading)
             feed.last_reading = now
             if feed.schema is not None:
                 feed.notify()

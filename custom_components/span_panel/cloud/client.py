@@ -39,6 +39,7 @@ from .snapshot import (
     circuit_is_switchable,
     field_metadata,
     node_for_circuit,
+    power_reading_key,
 )
 from .span_client.backend import RELAY_PROPERTY
 
@@ -139,6 +140,17 @@ class SpanCloudClient:
         if self._metadata is None:
             self._metadata = field_metadata(snapshot, frozenset(feed.schema.properties))
         return snapshot
+
+    def recent_power(self, source: str, circuit_id: str | None = None) -> list[tuple[float, float]]:
+        """Return the last minute of one power figure as `(SPAN frame time, W)`.
+
+        `source` is `main_feed`, `feedthrough` or `circuit` (with its id). The
+        frame time is SPAN's, so two panels on separate streams can be compared
+        at the same instant rather than whenever each happened to arrive.
+        """
+        schema = self._feed.schema
+        key = power_reading_key(schema, source, circuit_id) if schema is not None else None
+        return self._feed.recent(key) if key is not None else []
 
     def set_snapshot_interval(self, interval: float) -> None:
         """Change how often pushes are batched into snapshots."""

@@ -707,6 +707,17 @@ async def test_the_house_puts_the_16_under_the_40s_lugs(
         check = registry.async_get_entity_id("sensor", DOMAIN, f"{SERIAL_16}_feed_check")
         assert check is not None
         assert registry.async_get_entity_id("sensor", DOMAIN, f"{SERIAL_40}_feed_check") is None
+        # A few more frames, each stamped with SPAN's own time: the lugs at 1.0 s
+        # and 2.0 s, the MAIN 16 at 1.2 s and 1.6 s. The check pairs them by that
+        # time, not by when each happened to arrive.
+        for serial, key, value, at in (
+            (SERIAL_40, "panel/feedthrough_power", "42.000", 1.0),
+            (SERIAL_16, "feed-99/power", "40.000", 1.2),
+            (SERIAL_40, "panel/feedthrough_power", "42.000", 2.0),
+            (SERIAL_16, "feed-99/power", "40.000", 1.6),
+        ):
+            FakeStream.backends[serial].on_reading(Reading(key=key, value=value, timestamp=at))
+            await hass.async_block_till_done()
         # The next push from the MAIN 40 reaches the check on the MAIN 16, which
         # follows its upstream as well as its own panel.
         entry_40.runtime_data.coordinator.async_update_listeners()
@@ -715,6 +726,7 @@ async def test_the_house_puts_the_16_under_the_40s_lugs(
         assert float(state.state) == 2.0  # the lugs say 42 W, the MAIN 16 measures 40 W
         assert state.attributes["upstream_w"] == 42.0
         assert state.attributes["this_panel_w"] == 40.0
+        assert state.attributes["aligned"] is True  # matched by SPAN's frame time
 
         client = await hass_ws_client(hass)
         await client.send_json({"id": 1, "type": "span_panel/house"})

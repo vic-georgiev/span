@@ -23,13 +23,15 @@ Home Assistant; the glue at the bottom finds the loaded panels.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from bisect import bisect_left
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.const import EntityCategory, UnitOfPower
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.util import dt as dt_util
 from span_panel_api import SpanPanelSnapshot
 
 from .const import DOMAIN
@@ -149,6 +151,89 @@ def feed_check(
     if expected is None or measured is None:
         return None
     return FeedCheck(expected_w=float(expected), measured_w=float(measured))
+
+
+# --- the feed check at one instant ------------------------------------------------
+
+# Two samples further apart than this are not bridged: interpolating across a gap
+# in the upstream's stream would invent a reading.
+MAX_SAMPLE_GAP_S = 5.0
+# The average reported beside the instant's difference.
+AVERAGE_WINDOW_S = 60.0
+# Two readings of one steady load agree to within this: the larger of a few
+# watts and a few percent, which a meter's noise and accuracy cover.
+STEADY_TOLERANCE_W = 25.0
+STEADY_TOLERANCE_RATIO = 0.05
+
+Series = Sequence[tuple[float, float]]
+
+
+@dataclass(frozen=True)
+class AlignedFeedCheck(FeedCheck):
+    """A feed check taken at one instant of SPAN's own clock on both panels."""
+
+    at: float = 0.0
+    average_difference_w: float | None = None
+    pairs: int = 0
+
+
+def _steady(a: float, b: float) -> bool:
+    """Return whether two readings agree to within what metering noise explains."""
+    return abs(a - b) <= max(STEADY_TOLERANCE_W, STEADY_TOLERANCE_RATIO * max(abs(a), abs(b)))
+
+
+def _upstream_at(series: Series, when: float) -> float | None:
+    """Return the upstream's reading at `when`, or None unless it is steady there.
+
+    `when` must fall between two of the upstream's samples close enough to
+    bridge, and those two must agree: a load that switched between them puts
+    the instant inside a transition, where which side of the step each panel
+    sampled decides the difference, so no comparison is made there.
+    """
+    times = [sample[0] for sample in series]
+    index = bisect_left(times, when)
+    if index < len(series) and series[index][0] == when:
+        return series[index][1]
+    if index == 0 or index == len(series):
+        return None
+    (t0, v0), (t1, v1) = series[index - 1], series[index]
+    if t1 - t0 > MAX_SAMPLE_GAP_S or not _steady(v0, v1):
+        return None
+    return v0 if when - t0 <= t1 - when else v1
+
+
+def aligned_feed_check(upstream: Series, fed: Series) -> AlignedFeedCheck | None:
+    """Compare the two meters at the same instants, by the frame times SPAN stamps.
+
+    The two panels stream separately, so their latest readings are from
+    different moments, and a load that changes between them shows as a jump
+    that is not there. Instead each of the fed panel's samples is matched with
+    the upstream's reading at that same frame time, and only where both were
+    steady around it: the upstream across its samples either side, the fed
+    panel since its previous sample. The newest such pair is the check; the
+    pairs of the last minute give its average. None until there is one.
+    """
+    pairs: list[tuple[float, float, float]] = []
+    previous: float | None = None
+    for when, measured in fed:
+        settled = previous is not None and _steady(previous, measured)
+        previous = measured
+        if not settled:
+            continue
+        expected = _upstream_at(upstream, when)
+        if expected is not None:
+            pairs.append((when, expected, measured))
+    if not pairs:
+        return None
+    at, expected, measured = pairs[-1]
+    recent = [e - m for t, e, m in pairs if t >= at - AVERAGE_WINDOW_S]
+    return AlignedFeedCheck(
+        expected_w=expected,
+        measured_w=measured,
+        at=at,
+        average_difference_w=sum(recent) / len(recent),
+        pairs=len(recent),
+    )
 
 
 def house_power(
@@ -280,10 +365,23 @@ class SpanFeedCheckSensor(SpanPanelEntity, SensorEntity):
         self._upstream_coordinator = None
 
     def _check(self) -> FeedCheck | None:
+        aligned = self._aligned_check()
+        if aligned is not None:
+            return aligned
         upstream = loaded_panels(self.hass).get(self._feed.upstream or "")
         return feed_check(
             self._feed, upstream.snapshot if upstream else None, self.coordinator.data
         )
+
+    def _aligned_check(self) -> AlignedFeedCheck | None:
+        """Return the check at one instant, where both panels' transports keep their samples."""
+        upstream = _recent_power(
+            self._upstream_coordinator, _upstream_source(self._feed), self._feed.circuit
+        )
+        fed = _recent_power(self.coordinator, "main_feed", None)
+        if not upstream or not fed:
+            return None
+        return aligned_feed_check(upstream, fed)
 
     @property
     def native_value(self) -> float | None:
@@ -304,7 +402,34 @@ class SpanFeedCheckSensor(SpanPanelEntity, SensorEntity):
         if check is not None:
             attributes["upstream_w"] = round(check.expected_w, 1)
             attributes["this_panel_w"] = round(check.measured_w, 1)
+        attributes["aligned"] = isinstance(check, AlignedFeedCheck)
+        if isinstance(check, AlignedFeedCheck):
+            attributes["aligned_at"] = dt_util.utc_from_timestamp(check.at).isoformat()
+            if check.average_difference_w is not None:
+                attributes["average_difference_w"] = round(check.average_difference_w, 1)
+                attributes["average_pairs"] = check.pairs
         return attributes
+
+
+def _upstream_source(feed: Feed) -> str:
+    return "feedthrough" if feed.type == FEED_LUGS else "circuit"
+
+
+def _recent_power(
+    coordinator: SpanPanelCoordinator | None, source: str, circuit_id: str | None
+) -> list[tuple[float, float]]:
+    """Return a panel's recent samples of one power figure, where its transport keeps them.
+
+    Only the cloud transport does today; any other answers nothing, and the
+    check falls back to comparing the two panels' latest snapshots.
+    """
+    if coordinator is None:
+        return []
+    recent = getattr(coordinator.client, "recent_power", None)
+    if not callable(recent):
+        return []
+    samples = recent(source, circuit_id)
+    return samples if isinstance(samples, list) else []
 
 
 def create_feed_check_sensors(

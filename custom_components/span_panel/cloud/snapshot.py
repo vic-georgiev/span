@@ -205,6 +205,41 @@ def node_for_circuit(circuit_id: str) -> str:
     return f"circuit-{circuit_id}"
 
 
+def main_feed_key(schema: PanelSchema) -> str | None:
+    """Return the reading that is the panel's main feed, if the panel reports one.
+
+    The main feed is a metered instance that is not a branch circuit. A panel
+    can report a second such instance, its feed-through lugs (41 on a MAIN 40,
+    where the main feed is 2), so the lowest-numbered one is taken.
+    """
+    feeds = sorted(
+        (int(spec.node_id.rsplit("-", 1)[-1]), spec.key)
+        for spec in schema.properties.values()
+        if spec.node_kind is NodeKind.LUGS
+        and spec.property_id == "power"
+        and spec.node_id.rsplit("-", 1)[-1].isdigit()
+    )
+    return feeds[0][1] if feeds else None
+
+
+def power_reading_key(
+    schema: PanelSchema, source: str, circuit_id: str | None = None
+) -> str | None:
+    """Return the reading behind one of the snapshot's power figures.
+
+    `source` is `main_feed` (`instant_grid_power_w`), `feedthrough`
+    (`feedthrough_power_w`) or `circuit` (that circuit's `instant_power_w`).
+    The readings carry the same values and signs the snapshot does.
+    """
+    if source == "main_feed":
+        return main_feed_key(schema) or "panel/power"
+    if source == "feedthrough":
+        return "panel/feedthrough_power"
+    if source == "circuit" and circuit_id is not None:
+        return f"{node_for_circuit(circuit_id)}/power"
+    return None
+
+
 def build_snapshot(
     identity: PanelIdentity,
     schema: PanelSchema,
@@ -251,14 +286,8 @@ def build_snapshot(
     # panel's own node is the busbar. Either is "what the panel draws". A panel
     # can report a second such instance, its feed-through lugs (41 on a MAIN 40,
     # where the main feed is 2), so the lowest-numbered one is taken.
-    feeds = sorted(
-        (int(spec.node_id.rsplit("-", 1)[-1]), spec.key)
-        for spec in schema.properties.values()
-        if spec.node_kind is NodeKind.LUGS
-        and spec.property_id == "power"
-        and spec.node_id.rsplit("-", 1)[-1].isdigit()
-    )
-    feed_power = _float(readings, feeds[0][1]) if feeds else None
+    feed_key = main_feed_key(schema)
+    feed_power = _float(readings, feed_key) if feed_key else None
     panel_power = _float(readings, "panel/power")
 
     def flow(name: str) -> float | None:
