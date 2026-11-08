@@ -83,14 +83,22 @@ def panel_size_for(model: str, spaces: list[int]) -> int:
     return max(spaces, default=0)
 
 
-def space_offset(panel_size: int, spaces: list[int]) -> int:
-    """How far the cloud's space numbers sit above 1..panel_size.
+# Where a model's first branch space sits in the cloud's numbering. A MAIN 40
+# reports its spaces as 9..48, because spaces 1..8 are the main-breaker module
+# an MLO 48 replaces with branch spaces. Fixed per model rather than read off
+# the circuits, which would shift every breaker whenever the top spaces are empty.
+_FIRST_SPACE_BY_MODEL = {"MAIN 40": 9}
 
-    The cloud numbers a MAIN 40's spaces 9..48, because spaces 1..8 are the
-    main-breaker module an MLO 48 replaces with branch spaces. The panel card
-    draws 1..panel_size, so the numbers are shifted down to fit when they would
-    not otherwise.
+
+def space_offset(model: str, panel_size: int, spaces: list[int]) -> int:
+    """How far the cloud's space numbers sit above the card's 1..panel_size.
+
+    The model's known numbering when there is one. Otherwise only spaces that
+    could not fit at all move, by the least that makes them fit.
     """
+    first = _FIRST_SPACE_BY_MODEL.get(model)
+    if first is not None:
+        return first - 1
     if not spaces or panel_size <= 0:
         return 0
     return max(0, max(spaces) - panel_size)
@@ -138,7 +146,7 @@ def build_snapshot(
     circuit_nodes = _nodes(schema, NodeKind.CIRCUIT)
     all_spaces = sorted({space for specs in circuit_nodes.values() for space in specs[0].spaces})
     panel_size = panel_size_for(identity.model, all_spaces)
-    offset = space_offset(panel_size, all_spaces)
+    offset = space_offset(identity.model, panel_size, all_spaces)
 
     circuits: dict[str, SpanCircuitSnapshot] = {}
     for node_id, specs in sorted(circuit_nodes.items()):

@@ -244,18 +244,27 @@ def test_snapshot_maps_a_main_40_onto_the_integrations_terms() -> None:
     assert kitchen.relay_state == "CLOSED"
     assert kitchen.is_user_controllable
     assert kitchen.breaker_rating_a == 20.0
-    # Spaces fit the card's 1..40 only once the main-breaker module is taken out:
-    # the 9..48 numbering is not shifted when nothing reaches past 40.
-    assert kitchen.tabs == [9]
-    assert snapshot.circuits["22"].tabs == [11, 13]
+    # The cloud numbers a MAIN 40's spaces 9..48; the card draws 1..40.
+    assert kitchen.tabs == [1]
+    assert snapshot.circuits["22"].tabs == [3, 5]
 
 
-def test_spaces_past_the_panel_size_are_shifted_into_it() -> None:
-    schema = _panel_schema(SERIAL_40, {21: ("Far end", (48,)), 22: ("Near end", (9,))}, flows=False)
+def test_a_main_40s_spaces_shift_by_its_numbering_not_by_what_is_used() -> None:
+    """Empty top spaces must not move every breaker."""
+    schema = _panel_schema(SERIAL_40, {21: ("Low", (9,)), 22: ("Mid", (30,))}, flows=False)
     snapshot = build_snapshot(PanelIdentity(SERIAL_40, "MAIN 40"), schema, {}, lambda _key: None)
 
-    assert snapshot.circuits["21"].tabs == [40]
-    assert snapshot.circuits["22"].tabs == [1]
+    assert snapshot.circuits["21"].tabs == [1]
+    assert snapshot.circuits["22"].tabs == [22]
+
+
+def test_an_unknown_models_spaces_move_only_if_they_cannot_fit() -> None:
+    """Without a known numbering, spaces that fit stay where they are."""
+    schema = _panel_schema(SERIAL_16, {21: ("A", (1,)), 22: ("B", (16,))}, flows=False)
+    snapshot = build_snapshot(PanelIdentity(SERIAL_16, "MAIN 16"), schema, {}, lambda _key: None)
+
+    assert snapshot.circuits["21"].tabs == [1]
+    assert snapshot.circuits["22"].tabs == [16]
 
 
 def test_fields_the_cloud_does_not_carry_are_declared_unresolved() -> None:
