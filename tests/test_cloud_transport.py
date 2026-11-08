@@ -250,6 +250,19 @@ def test_snapshot_maps_a_main_40_onto_the_integrations_terms() -> None:
     assert snapshot.circuits["22"].tabs == [11, 13]
 
 
+def test_the_main_feed_wins_over_the_feed_through_lugs() -> None:
+    """A MAIN 40 can report its lugs (41) beside its main feed (2) as non-circuits."""
+    schema = _panel_schema(SERIAL_40, {21: ("Kitchen", (9,))}, flows=False)
+    schema.add(_spec("feed-41", NodeKind.LUGS, "power", "W"))
+    schema.add(_spec("feed-2", NodeKind.LUGS, "power", "W"))
+    readings = {"feed-41/power": "355.0", "feed-2/power": "2611.0", "feed-99/power": "1.0"}
+    snapshot = build_snapshot(
+        PanelIdentity(SERIAL_40, "MAIN 40"), schema, readings, lambda _k: None
+    )
+
+    assert snapshot.instant_grid_power_w == 2611.0
+
+
 def test_space_numbers_are_never_renumbered() -> None:
     """Breakers keep SPAN's numbers whichever spaces are in use."""
     schema = _panel_schema(SERIAL_16, {21: ("A", (9,)), 22: ("B", (24,))}, flows=False)

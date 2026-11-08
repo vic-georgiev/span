@@ -162,16 +162,18 @@ def build_snapshot(
             breaker_rating_a=float(first.breaker_amps) if first.breaker_amps else None,
         )
 
-    # The main feed is the one metered instance that is not a branch circuit;
-    # the panel's own node is the busbar. Either is "what the panel draws".
-    feed_power = next(
-        (
-            _float(readings, spec.key)
-            for spec in schema.properties.values()
-            if spec.node_kind is NodeKind.LUGS and spec.property_id == "power"
-        ),
-        None,
+    # The main feed is a metered instance that is not a branch circuit; the
+    # panel's own node is the busbar. Either is "what the panel draws". A panel
+    # can report a second such instance, its feed-through lugs (41 on a MAIN 40,
+    # where the main feed is 2), so the lowest-numbered one is taken.
+    feeds = sorted(
+        (int(spec.node_id.rsplit("-", 1)[-1]), spec.key)
+        for spec in schema.properties.values()
+        if spec.node_kind is NodeKind.LUGS
+        and spec.property_id == "power"
+        and spec.node_id.rsplit("-", 1)[-1].isdigit()
     )
+    feed_power = _float(readings, feeds[0][1]) if feeds else None
     panel_power = _float(readings, "panel/power")
 
     def flow(name: str) -> float | None:
