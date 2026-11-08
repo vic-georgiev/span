@@ -26,6 +26,7 @@ from __future__ import annotations
 from bisect import bisect_left
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+import time
 from typing import Any, ClassVar
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
@@ -403,12 +404,29 @@ class SpanFeedCheckSensor(SpanPanelEntity, SensorEntity):
             attributes["upstream_w"] = round(check.expected_w, 1)
             attributes["this_panel_w"] = round(check.measured_w, 1)
         attributes["aligned"] = isinstance(check, AlignedFeedCheck)
+        lag = _house_clock_lag(self.hass)
+        if lag is not None:
+            attributes["house_clock_lag_s"] = round(lag, 2)
         if isinstance(check, AlignedFeedCheck):
             attributes["aligned_at"] = dt_util.utc_from_timestamp(check.at).isoformat()
             if check.average_difference_w is not None:
                 attributes["average_difference_w"] = round(check.average_difference_w, 1)
                 attributes["average_pairs"] = check.pairs
         return attributes
+
+
+def _house_clock_lag(hass: HomeAssistant) -> float | None:
+    """Return how far behind now the house is shown, where a clock is keeping it.
+
+    The cloud panels are shown at one shared instant (see `cloud.clock`), and the
+    price is this much delay. Its frame times are SPAN's, so the figure carries
+    any difference between SPAN's clock and this machine's as well.
+    """
+    from .cloud.clock import CLOCK_KEY  # pylint: disable=import-outside-toplevel
+
+    clock = hass.data.get(DOMAIN, {}).get(CLOCK_KEY)
+    now = getattr(clock, "now", None)
+    return time.time() - now if isinstance(now, float) else None
 
 
 def _upstream_source(feed: Feed) -> str:

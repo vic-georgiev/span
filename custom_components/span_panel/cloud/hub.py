@@ -91,6 +91,11 @@ def discover(path: Path) -> list[SiteInfo]:
         raise CloudAuthFailed(str(err)) from err
 
 
+def _format_reading(value: float) -> str:
+    """Write a sampled value back in the form readings take."""
+    return f"{value:.3f}"
+
+
 @dataclass
 class PanelFeed:
     """One panel's live state as the stream reports it. Loop-thread only."""
@@ -110,6 +115,9 @@ class PanelFeed:
     # frame time rather than when it arrived here: what lets two panels on
     # separate streams be compared at the same instant (see `house`).
     history: dict[str, deque[tuple[float, float]]] = field(default_factory=dict)
+    # The newest frame time delivered, on SPAN's clock: this panel's watermark
+    # for the house clock (see `clock`).
+    watermark: float | None = None
 
     def recent(self, key: str) -> list[tuple[float, float]]:
         """Return `(frame time, value)` for a reading's recent samples, oldest first."""
@@ -126,6 +134,28 @@ class PanelFeed:
         if samples and reading.timestamp <= samples[-1][0]:
             return  # a repeat or a late frame: the series only moves forward
         samples.append((reading.timestamp, value))
+        if self.watermark is None or reading.timestamp > self.watermark:
+            self.watermark = reading.timestamp
+
+    def readings_at(self, at: float | None) -> dict[str, str]:
+        """Return the readings as they stood at `at` on SPAN's clock.
+
+        Each reading with a history takes its last sample at or before `at`; one
+        with none there yet, or no history at all (relay state, configuration),
+        stands as it is. `None` is now: the readings as they are.
+        """
+        readings = dict(self.readings)
+        if at is None:
+            return readings
+        for key, samples in self.history.items():
+            value: float | None = None
+            for when, sample in reversed(samples):
+                if when <= at:
+                    value = sample
+                    break
+            if value is not None:
+                readings[key] = _format_reading(value)
+        return readings
 
     def energy_total(self, key: str) -> float | None:
         """Return the metered kWh total for a property key."""

@@ -20,7 +20,7 @@ import logging
 import time
 
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import async_call_later, async_track_time_interval
+from homeassistant.helpers.event import async_track_time_interval
 from span_panel_api import (
     ControlCommand,
     ControlInterceptor,
@@ -32,6 +32,7 @@ from span_panel_api import (
     SpanPanelSnapshot,
 )
 
+from .clock import house_clock
 from .hub import CloudSiteHub, PanelFeed, async_release_feed
 from .snapshot import (
     PanelIdentity,
@@ -76,11 +77,37 @@ class SpanCloudClient:
         self._interceptor: ControlInterceptor | None = None
         self._streaming = False
         self._connected: bool | None = None
-        self._dispatch_timer: Callable[[], None] | None = None
         self._unsub_watchdog: Callable[[], None] | None = None
         self._closed = False
         self._metadata: dict[str, FieldMetadata] | None = None
         feed.listeners.add(self._on_feed_update)
+        # Every cloud panel is shown at the house clock's instant, built at its
+        # tick, so two panels never show two different moments (see `clock`).
+        self._clock = house_clock(hass)
+        self._leave_clock = self._clock.join(self)
+
+    # --- the house clock -----------------------------------------------------
+
+    @property
+    def watermark(self) -> float | None:
+        """Return the newest SPAN frame time this panel has delivered."""
+        return self._feed.watermark if self._feed.schema is not None else None
+
+    @property
+    def snapshot_interval(self) -> float:
+        """Return how often this panel's snapshot is rebuilt, in seconds."""
+        return self._snapshot_interval
+
+    async def dispatch_at(self, at: float | None) -> None:
+        """Push this panel's snapshot as it stood at `at`, at the clock's tick."""
+        if not self._streaming:
+            return
+        try:
+            snapshot = self._snapshot_at(at)
+        except SpanPanelConnectionError:
+            return
+        for callback_ in list(self._snapshot_callbacks):
+            await callback_(snapshot)
 
     # --- identity the entities read ----------------------------------------
 
@@ -115,6 +142,7 @@ class SpanCloudClient:
         if self._closed:
             return
         self._closed = True
+        self._leave_clock()
         await self.stop_streaming()
         self._feed.listeners.discard(self._on_feed_update)
         await async_release_feed(self._hass, self._hub, self._feed)
@@ -128,7 +156,11 @@ class SpanCloudClient:
     # --- snapshot ----------------------------------------------------------
 
     async def get_snapshot(self) -> SpanPanelSnapshot:
-        """Build the panel's snapshot from the latest stream state."""
+        """Build the panel's snapshot at the house clock's current instant."""
+        return self._snapshot_at(self._clock.now)
+
+    def _snapshot_at(self, at: float | None) -> SpanPanelSnapshot:
+        """Build the panel's snapshot from its readings as they stood at `at`."""
         feed = self._feed
         if feed.schema is None:
             raise SpanPanelConnectionError("SPAN's cloud has not described this panel yet")
@@ -136,7 +168,9 @@ class SpanCloudClient:
             raise SpanPanelConnectionError(
                 f"no reading from SPAN's cloud for over {STALE_AFTER_SECONDS:.0f} seconds"
             )
-        snapshot = build_snapshot(self._identity, feed.schema, feed.readings, feed.energy_total)
+        snapshot = build_snapshot(
+            self._identity, feed.schema, feed.readings_at(at), feed.energy_total
+        )
         if self._metadata is None:
             self._metadata = field_metadata(snapshot, frozenset(feed.schema.properties))
         return snapshot
@@ -200,36 +234,13 @@ class SpanCloudClient:
         if self._unsub_watchdog is not None:
             self._unsub_watchdog()
             self._unsub_watchdog = None
-        if self._dispatch_timer is not None:
-            self._dispatch_timer()
-            self._dispatch_timer = None
 
     @callback
     def _on_feed_update(self) -> None:
         if not self._streaming or self._feed.schema is None:
             return
         self._set_connected(True)
-        if self._snapshot_interval <= 0:
-            self._hass.async_create_task(self._dispatch())
-        elif self._dispatch_timer is None:
-            self._dispatch_timer = async_call_later(
-                self._hass, self._snapshot_interval, self._fire_dispatch
-            )
-
-    @callback
-    def _fire_dispatch(self, _now: object) -> None:
-        self._dispatch_timer = None
-        self._hass.async_create_task(self._dispatch())
-
-    async def _dispatch(self) -> None:
-        if not self._streaming:
-            return
-        try:
-            snapshot = await self.get_snapshot()
-        except SpanPanelConnectionError:
-            return
-        for callback_ in list(self._snapshot_callbacks):
-            await callback_(snapshot)
+        self._clock.nudge()
 
     @callback
     def _check_current(self, _now: object = None) -> None:

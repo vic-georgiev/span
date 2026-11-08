@@ -22,6 +22,7 @@ from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.span_panel.cloud import hub as hub_module
+from custom_components.span_panel.cloud.clock import house_clock
 from custom_components.span_panel.cloud.snapshot import (
     PanelIdentity,
     build_snapshot,
@@ -747,3 +748,58 @@ async def test_the_house_puts_the_16_under_the_40s_lugs(
         assert topology["result"]["first_space"] == 9  # below 9 is the main-breaker module
         # Only the 40's main feed: the 16 is already inside it.
         assert reply["result"]["house_power_entities"] == [panels[0]["main_feed_power"]]
+
+
+async def test_both_panels_are_shown_at_one_instant(hass: HomeAssistant, monkeypatch) -> None:
+    """The MAIN 40 is a frame ahead: its lugs are shown as they stood when the 16 last spoke."""
+    schema_40, readings_40 = PANELS[SERIAL_40]
+    monkeypatch.setitem(
+        PANELS, SERIAL_40, (schema_40, {**readings_40, "panel/feedthrough_power": "42.000"})
+    )
+    FakeStream.backends = {}
+    entry_40 = _entry(SERIAL_40, "MAIN 40")
+    entry_16 = _entry(SERIAL_16, "MAIN 16")
+    entry_16.add_to_hass(hass)
+    entry_40.add_to_hass(hass)
+
+    with (
+        patch.object(hub_module, "discover", return_value=[SITE]),
+        patch.object(hub_module, "SiteStream", FakeStream),
+        patch.object(hub_module, "write_tokens_if_missing"),
+    ):
+        assert await hass.config_entries.async_setup(entry_40.entry_id)
+        await hass.async_block_till_done()
+
+        # A 260 W load comes on downstream at about 1.8 s. The MAIN 40 has framed
+        # it already (at 2.0 s); the MAIN 16's newest frame is from 1.6 s.
+        for serial, key, value, at in (
+            (SERIAL_40, "panel/feedthrough_power", "42.000", 1.0),
+            (SERIAL_16, "feed-99/power", "40.000", 1.2),
+            (SERIAL_16, "feed-99/power", "40.000", 1.6),
+            (SERIAL_40, "panel/feedthrough_power", "302.000", 2.0),
+        ):
+            FakeStream.backends[serial].on_reading(Reading(key=key, value=value, timestamp=at))
+            await hass.async_block_till_done()
+
+        clock = house_clock(hass)
+        assert clock.reading().at == 1.6  # the instant both panels have reached
+        await clock._tick()  # noqa: SLF001 - the tick the stream's pace would fire
+        await hass.async_block_till_done()
+
+        snap_40 = entry_40.runtime_data.coordinator.data
+        snap_16 = entry_16.runtime_data.coordinator.data
+        assert clock.now == 1.6
+        # Shown at 1.6 s on both: the lugs' 42 W, not the 302 W the 16 has not seen yet.
+        assert snap_40.feedthrough_power_w == 42.0
+        assert snap_16.instant_grid_power_w == 40.0
+
+        # The MAIN 16 catches up; the clock moves on, and both show the load.
+        FakeStream.backends[SERIAL_16].on_reading(
+            Reading(key="feed-99/power", value="300.000", timestamp=2.2)
+        )
+        await hass.async_block_till_done()
+        await clock._tick()  # noqa: SLF001
+        await hass.async_block_till_done()
+        assert clock.now == 2.0
+        assert entry_40.runtime_data.coordinator.data.feedthrough_power_w == 302.0
+        assert entry_16.runtime_data.coordinator.data.instant_grid_power_w == 40.0  # 1.6 s, at 2.0

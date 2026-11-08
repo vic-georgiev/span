@@ -12,6 +12,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from span_panel_api import SpanCircuitSnapshot, SpanPanelSnapshot
 import voluptuous as vol
 
+from custom_components.span_panel.cloud.clock import clock_instant
 from custom_components.span_panel.const import DOMAIN
 from custom_components.span_panel.house import (
     CONF_FEED,
@@ -271,3 +272,21 @@ def test_no_pair_across_a_gap_in_the_upstreams_stream() -> None:
     upstream = [(0.0, 100.0), (30.0, 100.0)]
     assert aligned_feed_check(upstream, [(14.0, 100.0), (15.0, 100.0)]) is None
     assert aligned_feed_check([], [(1.0, 1.0), (2.0, 1.0)]) is None
+
+
+# --- the house clock --------------------------------------------------------------
+
+
+def test_the_house_clock_waits_for_the_panel_behind() -> None:
+    reading = clock_instant([2.0, 1.6])
+    assert (reading.at, reading.members, reading.left_out) == (1.6, 2, 0)
+    assert clock_instant([5.0]).at == 5.0  # one panel runs at its newest frame
+    assert clock_instant([None, None]).at is None
+
+
+def test_a_stalled_panel_does_not_freeze_the_house() -> None:
+    # The MAIN 16 stopped at 2.0 (cellular, say); the MAIN 40 is at 10.0.
+    reading = clock_instant([10.0, 2.0])
+    assert (reading.at, reading.left_out) == (10.0, 1)
+    # Within a few frames it still sets the clock.
+    assert clock_instant([10.0, 8.0]).at == 8.0
