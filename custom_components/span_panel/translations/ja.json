@@ -971,6 +971,10 @@
     "unvalidated_hardware_no_model": {
       "title": "SPAN Panel のハードウェアはこのリリースで検証されていません",
       "description": "不明なモデルのハードウェアバージョン {version} は、このリリースで検証されていません。セットアップは停止し、このパネルのエンティティは作成されません。"
+    },
+    "cloud_fields_unavailable": {
+      "title": "SPAN クラウドでは利用できません",
+      "description": "SPAN クラウド接続は次のデータを Home Assistant に提供しません：{fields}。影響を受けるエンティティ：{count}（例：{examples}）。作り上げた値を表示する代わりに、利用不可のままになります。これは非公式のクラウド接続の制限であり、パネルの故障ではありません。"
     }
   }
 }

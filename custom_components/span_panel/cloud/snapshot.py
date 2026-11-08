@@ -76,32 +76,24 @@ class PanelIdentity:
 
 
 def panel_size_for(model: str, spaces: list[int]) -> int:
-    """Breaker spaces on the panel: the number in its model, else the spaces seen."""
-    match = re.search(r"(\d+)", model)
-    if match:
-        return int(match.group(1))
-    return max(spaces, default=0)
+    """How many spaces the card draws: enough for the numbers the panel uses.
 
-
-# Where a model's first branch space sits in the cloud's numbering. A MAIN 40
-# reports its spaces as 9..48, because spaces 1..8 are the main-breaker module
-# an MLO 48 replaces with branch spaces. Fixed per model rather than read off
-# the circuits, which would shift every breaker whenever the top spaces are empty.
-_FIRST_SPACE_BY_MODEL = {"MAIN 40": 9}
-
-
-def space_offset(model: str, panel_size: int, spaces: list[int]) -> int:
-    """How far the cloud's space numbers sit above the card's 1..panel_size.
-
-    The model's known numbering when there is one. Otherwise only spaces that
-    could not fit at all move, by the least that makes them fit.
+    Spaces keep the numbers SPAN gives them, which are the ones printed on the
+    panel and shown in the SPAN app. A MAIN 40 numbers its 40 branch spaces
+    9..48, because 1..8 is the main-breaker module that an MLO 48 replaces with
+    branch spaces, so its card is 48 tall with that module's rows left empty,
+    as on the panel itself. Renumbering to 1..40 would put every breaker on a
+    number that appears nowhere else.
     """
-    first = _FIRST_SPACE_BY_MODEL.get(model)
-    if first is not None:
-        return first - 1
-    if not spaces or panel_size <= 0:
-        return 0
-    return max(0, max(spaces) - panel_size)
+    if model in _LAST_SPACE_BY_MODEL:
+        return max([_LAST_SPACE_BY_MODEL[model], *spaces])
+    match = re.search(r"(\d+)", model)
+    rated = int(match.group(1)) if match else 0
+    return max([rated, *spaces])
+
+
+# Models whose numbering does not start at 1, by their highest space number.
+_LAST_SPACE_BY_MODEL = {"MAIN 40": 48}
 
 
 def _float(readings: Mapping[str, str], key: str) -> float | None:
@@ -146,7 +138,6 @@ def build_snapshot(
     circuit_nodes = _nodes(schema, NodeKind.CIRCUIT)
     all_spaces = sorted({space for specs in circuit_nodes.values() for space in specs[0].spaces})
     panel_size = panel_size_for(identity.model, all_spaces)
-    offset = space_offset(identity.model, panel_size, all_spaces)
 
     circuits: dict[str, SpanCircuitSnapshot] = {}
     for node_id, specs in sorted(circuit_nodes.items()):
@@ -161,7 +152,7 @@ def build_snapshot(
             instant_power_w=_float(readings, f"{node_id}/power"),
             produced_energy_wh=None,
             consumed_energy_wh=_wh(energy_kwh(f"{node_id}/power")),
-            tabs=sorted(space - offset for space in first.spaces),
+            tabs=sorted(first.spaces),
             priority=UNKNOWN,
             is_user_controllable=RELAY_PROPERTY in props,
             is_sheddable=False,
@@ -216,6 +207,13 @@ def build_snapshot(
         power_flow_grid=flow("grid"),
         power_flow_site=flow("home"),
     )
+
+
+CLOUD_GAP_PATHS = frozenset(
+    [f"panel.{name}" for name in _UNRESOLVED_PANEL_FIELDS]
+    + [f"circuit.{name}" for name in _UNRESOLVED_CIRCUIT_FIELDS]
+)
+"""Field paths the cloud path declares unresolved: known gaps, not defects."""
 
 
 def field_metadata(snapshot: SpanPanelSnapshot) -> dict[str, FieldMetadata]:

@@ -114,6 +114,17 @@ class PanelFeed:
             listener()
 
 
+def upstream_panel(site: SiteInfo) -> PanelInfo:
+    """Return the panel presumed to be at the service entrance: the largest one."""
+    panels = [panel for panel in site.panels if panel.serial] or [site.lead]
+
+    def size(panel: PanelInfo) -> int:
+        digits = "".join(ch for ch in panel.model if ch.isdigit())
+        return int(digits) if digits else 0
+
+    return max(panels, key=size)
+
+
 class CloudSiteHub:
     """The stream for one site, and a feed per panel on it."""
 
@@ -139,9 +150,12 @@ class CloudSiteHub:
         self._auth_failed_listeners: set[Callable[[], None]] = set()
 
         stream_uuid = site_device_uuid(device_uuid, site.site_id)
-        # The lead panel takes the site's own block and flows (grid, home ...),
-        # so they reach a panel this integration has a device for.
-        routes = site_routes(site, site.lead.key)
+        # The site's own block and flows (grid, home ...) go to the panel at the
+        # service entrance. The cloud does not say which that is; a smaller panel
+        # fed through a larger one's lugs is the usual arrangement, so the largest
+        # panel takes them.
+        upstream = upstream_panel(site)
+        routes = site_routes(site, upstream.key)
         if routes is None:
             backend = CloudBackend(
                 tokens,

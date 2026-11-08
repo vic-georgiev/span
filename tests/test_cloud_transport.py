@@ -17,7 +17,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
@@ -231,7 +231,6 @@ def test_snapshot_maps_a_main_40_onto_the_integrations_terms() -> None:
         lambda key: 1.5 if key == "circuit-21/power" else None,
     )
 
-    assert snapshot.panel_size == 40
     assert snapshot.instant_grid_power_w == 2611.0  # the main feed, not the busbar
     assert snapshot.l1_voltage == 121.2
     # The panel's wire frame: negative while importing; the grid sensor flips it.
@@ -244,27 +243,33 @@ def test_snapshot_maps_a_main_40_onto_the_integrations_terms() -> None:
     assert kitchen.relay_state == "CLOSED"
     assert kitchen.is_user_controllable
     assert kitchen.breaker_rating_a == 20.0
-    # The cloud numbers a MAIN 40's spaces 9..48; the card draws 1..40.
-    assert kitchen.tabs == [1]
-    assert snapshot.circuits["22"].tabs == [3, 5]
+    # SPAN's own numbers, as on the panel and in the app: a MAIN 40 runs 9..48,
+    # so its card is 48 tall with the main-breaker module's rows empty.
+    assert snapshot.panel_size == 48
+    assert kitchen.tabs == [9]
+    assert snapshot.circuits["22"].tabs == [11, 13]
 
 
-def test_a_main_40s_spaces_shift_by_its_numbering_not_by_what_is_used() -> None:
-    """Empty top spaces must not move every breaker."""
-    schema = _panel_schema(SERIAL_40, {21: ("Low", (9,)), 22: ("Mid", (30,))}, flows=False)
-    snapshot = build_snapshot(PanelIdentity(SERIAL_40, "MAIN 40"), schema, {}, lambda _key: None)
-
-    assert snapshot.circuits["21"].tabs == [1]
-    assert snapshot.circuits["22"].tabs == [22]
-
-
-def test_an_unknown_models_spaces_move_only_if_they_cannot_fit() -> None:
-    """Without a known numbering, spaces that fit stay where they are."""
+def test_space_numbers_are_never_renumbered() -> None:
+    """Breakers keep SPAN's numbers whichever spaces are in use."""
     schema = _panel_schema(SERIAL_16, {21: ("A", (1,)), 22: ("B", (16,))}, flows=False)
     snapshot = build_snapshot(PanelIdentity(SERIAL_16, "MAIN 16"), schema, {}, lambda _key: None)
 
+    assert snapshot.panel_size == 16
     assert snapshot.circuits["21"].tabs == [1]
     assert snapshot.circuits["22"].tabs == [16]
+
+
+def test_the_largest_panel_takes_the_sites_flows() -> None:
+    """A MAIN 16 fed through a MAIN 40 is downstream, whichever the cloud lists first."""
+    site = SiteInfo(
+        site_id="site-1",
+        hardware_ids=("gw-16", "gw-40"),
+        panels=tuple(reversed(SITE.panels)),
+        gateways=("gw-16", "gw-40"),
+    )
+    assert site.lead.serial == SERIAL_16
+    assert hub_module.upstream_panel(site).serial == SERIAL_40
 
 
 def test_fields_the_cloud_does_not_carry_are_declared_unresolved() -> None:
@@ -351,6 +356,17 @@ async def test_two_panels_on_one_site_share_one_stream(hass: HomeAssistant) -> N
         assert FakeStream.backends[SERIAL_16].commands == [("circuit-21/relay", "CLOSED")]
         # Only the MAIN 16 was told anything: the circuit ids overlap across panels.
         assert FakeStream.backends[SERIAL_40].commands == []
+
+        # Known cloud gaps are one notice per panel, not a Repair per field
+        # claiming the firmware dropped it.
+        issues = [
+            issue
+            for (domain, _id), issue in ir.async_get(hass).issues.items()
+            if domain == DOMAIN
+            and issue.translation_key in ("cloud_fields_unavailable", "schema_field_unresolved")
+        ]
+        assert sorted(i.translation_key for i in issues) == ["cloud_fields_unavailable"] * 2
+        assert "circuit.priority" in issues[0].translation_placeholders["fields"]
 
         assert await hass.config_entries.async_unload(entry_40.entry_id)
         assert not FakeStream.backends[SERIAL_40].stopped  # the MAIN 16 still reads it

@@ -32,7 +32,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
 
-from .const import DOMAIN, EVENT_SCHEMA_ISSUE
+from .const import API_VERSION_CLOUD, CONF_API_VERSION, DOMAIN, EVENT_SCHEMA_ISSUE
 from .schema_validation import SchemaFindings
 
 _LOGGER = logging.getLogger(__name__)
@@ -63,6 +63,15 @@ survives a restart, which is the only property being a Repair was buying.
 Unlike the other ids here this one is a whole id rather than a prefix -- it was
 raised as `{stem}_{entry_id}` with nothing after -- so it is cleared by name.
 """
+
+
+def _cloud_gap_paths(entry: ConfigEntry) -> frozenset[str]:
+    """Fields a SPAN-cloud entry is known not to have; none for a local panel."""
+    if entry.data.get(CONF_API_VERSION) != API_VERSION_CLOUD:
+        return frozenset()
+    from .cloud.snapshot import CLOUD_GAP_PATHS  # noqa: PLC0415
+
+    return CLOUD_GAP_PATHS
 
 
 def _unresolved_id(entry_id: str, field_path: str) -> str:
@@ -133,10 +142,18 @@ def async_sync_schema_issues(
     raised_unresolved: list[str] = []
     raised_mismatches: list[str] = []
 
+    known_gaps = _cloud_gap_paths(entry)
+    gaps: list[str] = []
+    gap_entities: list[str] = []
+
     for field_path in sorted(findings.unresolved):
         affected = _affected(entity_ids_by_path, field_path)
         if not affected:
             _log_suppressed("unresolved-field", field_path)
+            continue
+        if field_path in known_gaps:
+            gaps.append(field_path)
+            gap_entities.extend(affected)
             continue
         issue_id = _unresolved_id(entry.entry_id, field_path)
         wanted.add(issue_id)
@@ -154,6 +171,27 @@ def async_sync_schema_issues(
             severity=ir.IssueSeverity.WARNING,
             translation_key="schema_field_unresolved",
             translation_placeholders={"field_path": field_path, **_placeholders(affected)},
+        )
+
+    if gaps:
+        # A panel read through SPAN's cloud is missing these by construction: a
+        # limit of the transport, not a defect, so one notice per panel rather
+        # than one Repair per field claiming the firmware dropped it.
+        issue_id = _unresolved_id(entry.entry_id, "cloud_transport")
+        wanted.add(issue_id)
+        raised_unresolved.extend(gaps)
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="cloud_fields_unavailable",
+            translation_placeholders={
+                "fields": ", ".join(gaps),
+                **_placeholders(sorted(gap_entities)),
+            },
         )
 
     for mismatch in findings.unit_mismatches:

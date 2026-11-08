@@ -971,6 +971,10 @@
     "unvalidated_hardware_no_model": {
       "title": "SPAN Panel hardware not validated with this release",
       "description": "Hardware version {version} with an unknown model has not been validated with this release. Setup has stopped, and no entities are created for this panel."
+    },
+    "cloud_fields_unavailable": {
+      "title": "Not available through SPAN's cloud",
+      "description": "The SPAN cloud connection does not provide these to Home Assistant: {fields}. Entities affected: {count} (for example: {examples}). They stay unavailable instead of showing made-up values. This is a limit of the unofficial cloud connection, not a fault in your panel."
     }
   }
 }
