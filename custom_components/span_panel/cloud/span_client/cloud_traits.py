@@ -88,10 +88,13 @@ SWITCH_STATE_UNKNOWN = 1
 SWITCH_STATE_OPEN = 2
 SWITCH_STATE_CLOSED = 3
 
-# Circuit position blocks, keyed by wire kind. These field numbers match the
-# telemetry oneof tags (11 two_wire / 12 three_wire), which is how the two sides
-# were tied together in the first place.
-_POSITION_FIELDS = (11, 13)
+# Circuit position blocks, keyed by wire kind: 11 a single-pole branch, 13 a
+# two-pole one, 12 the battery's breaker (a two-pole breaker with no label, whose
+# spaces SPAN shows as one "Powerwall" card).
+_POSITION_FIELDS = (11, 12, 13)
+
+# What a 1/15 entry is (its field 2): 1 a branch circuit, 3 the battery's breaker.
+CIRCUIT_KIND_BATTERY = 3
 
 # Guard against a pathological or hostile nesting depth while walking TraitRefs.
 _MAX_DEPTH = 8
@@ -137,11 +140,18 @@ class CircuitInfo:
     # Shed policy: 1 on the breakers SPAN never turns off (the app's "always
     # on", and the battery's own breaker), 2 on every other.
     shed_policy: int | None = None
+    # 1/15 field 2: 1 a branch circuit, 3 the battery's breaker. Last, because
+    # callers build this positionally.
+    kind: int | None = None
 
     @property
     def display_name(self) -> str:
         """A human label, falling back to the instance id when unnamed."""
-        return self.label or f"Circuit {self.instance_id}"
+        if self.label:
+            return self.label
+        if self.kind == CIRCUIT_KIND_BATTERY:
+            return "Battery"
+        return f"Circuit {self.instance_id}"
 
 
 def parse_trait_snapshot(raw: bytes) -> dict[int, CircuitInfo]:
@@ -215,6 +225,7 @@ def _circuit_from(
     inner = body.get_msg(1)
     if inner is None:
         return None
+    kind = _int_or_none(inner, 2)
 
     position: Message | None = None
     for no in _POSITION_FIELDS:
@@ -224,6 +235,7 @@ def _circuit_from(
     if position is None:
         return CircuitInfo(
             instance_id=instance,
+            kind=kind,
             relay_closed=relay_closed,
             switch=switch,
             backup_priority=priority,
@@ -251,6 +263,7 @@ def _circuit_from(
 
     return CircuitInfo(
         instance_id=instance,
+        kind=kind,
         label=label or None,
         spaces=tuple(sorted(set(spaces))),
         breaker_amps=amps,

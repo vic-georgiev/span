@@ -394,6 +394,24 @@ def test_the_trait_snapshot_yields_priorities_ranks_and_limits() -> None:
     assert (panel.ethernet_up, panel.wifi_up, panel.cellular_up) == (True, False, True)
 
 
+def test_the_battery_breaker_has_its_spaces_and_a_name() -> None:
+    """The battery's breaker keeps its position in field 12, with no label."""
+    spaces = [
+        _trait(17, 38, field_varint(3, 46)),
+        _trait(17, 40, field_varint(3, 48)),
+    ]
+    position = field_message(1, _trait_ref(17, 38)) + field_message(2, _trait_ref(17, 40))
+    battery = _trait(15, 51, field_varint(1, 1) + field_varint(2, 3) + field_message(12, position))
+    raw = field_message(
+        1, field_message(1, field_string(1, "gw-40")) + b"".join([*spaces, battery])
+    )
+
+    info = parse_trait_snapshot(raw)[51]
+    assert info.spaces == (46, 48)
+    assert info.display_name == "Battery"
+    assert info.breaker_amps is None  # SPAN gives it no rating, so it gets no switch
+
+
 def test_priorities_and_powerup_reach_the_snapshot() -> None:
     schema, readings = PANELS[SERIAL_40]
     readings = {
