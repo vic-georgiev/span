@@ -603,7 +603,24 @@
         },
         "description": "Configurar os ajustes da integração SPAN Panel.",
         "title": "Opções do painel SPAN"
+      },
+      "feed": {
+        "title": "O que alimenta este painel",
+        "description": "Indique como este painel é alimentado, para que a vista da casa o posicione e conte a sua potência uma só vez. Escolha alimentação própria se for alimentado pela concessionária ou por um painel que não seja SPAN.",
+        "data": {
+          "feed": "Alimentado a partir de"
+        }
+      },
+      "feed_circuit": {
+        "title": "Qual circuito alimenta este painel",
+        "description": "Escolha o disjuntor em {upstream} que alimenta este painel.",
+        "data": {
+          "circuit": "Circuito derivado"
+        }
       }
+    },
+    "abort": {
+      "feed_no_circuits": "O painel a montante ainda não tem circuitos para escolher. Tente novamente quando estiver ligado."
     }
   },
   "selector": {

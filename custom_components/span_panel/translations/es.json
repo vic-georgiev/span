@@ -603,7 +603,24 @@
         },
         "description": "Configurar los ajustes de la integración SPAN Panel.",
         "title": "Opciones del Panel SPAN"
+      },
+      "feed": {
+        "title": "Qué alimenta este panel",
+        "description": "Indique cómo se alimenta este panel, para que la vista de la casa lo ubique y cuente su potencia una sola vez. Elija su propio suministro si lo alimenta la compañía eléctrica o un panel que no es SPAN.",
+        "data": {
+          "feed": "Alimentado desde"
+        }
+      },
+      "feed_circuit": {
+        "title": "Qué circuito alimenta este panel",
+        "description": "Elija el interruptor de {upstream} que alimenta este panel.",
+        "data": {
+          "circuit": "Circuito derivado"
+        }
       }
+    },
+    "abort": {
+      "feed_no_circuits": "El panel de origen aún no tiene circuitos para elegir. Inténtelo de nuevo cuando se haya conectado."
     }
   },
   "selector": {

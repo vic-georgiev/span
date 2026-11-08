@@ -603,7 +603,24 @@
         },
         "description": "Configurer les paramètres de l'intégration SPAN Panel.",
         "title": "Options du panneau SPAN"
+      },
+      "feed": {
+        "title": "Ce qui alimente ce panneau",
+        "description": "Indiquez comment ce panneau est alimenté, afin que la vue de la maison le place et ne compte sa puissance qu'une fois. Choisissez son propre raccordement s'il est alimenté par le réseau ou par un panneau non SPAN.",
+        "data": {
+          "feed": "Alimenté depuis"
+        }
+      },
+      "feed_circuit": {
+        "title": "Quel circuit alimente ce panneau",
+        "description": "Choisissez le disjoncteur de {upstream} qui alimente ce panneau.",
+        "data": {
+          "circuit": "Circuit de dérivation"
+        }
       }
+    },
+    "abort": {
+      "feed_no_circuits": "Le panneau amont n'a pas encore de circuits à proposer. Réessayez une fois qu'il est connecté."
     }
   },
   "selector": {

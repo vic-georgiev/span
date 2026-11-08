@@ -603,7 +603,24 @@
         },
         "description": "Configure SPAN Panel integration settings.",
         "title": "SPAN Panel Options"
+      },
+      "feed": {
+        "title": "What feeds this panel",
+        "description": "Tell the integration how this panel is supplied, so the house view can place it and count its power once. Choose its own supply if it is fed from the utility or a non-SPAN panel.",
+        "data": {
+          "feed": "Fed from"
+        }
+      },
+      "feed_circuit": {
+        "title": "Which circuit feeds this panel",
+        "description": "Pick the breaker on {upstream} that feeds this panel.",
+        "data": {
+          "circuit": "Branch circuit"
+        }
       }
+    },
+    "abort": {
+      "feed_no_circuits": "The upstream panel has no circuits to choose from yet. Try again once it has connected."
     }
   },
   "selector": {

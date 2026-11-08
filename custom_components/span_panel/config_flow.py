@@ -18,6 +18,12 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_ACCESS_TOKEN, CONF_HOST
 from homeassistant.core import callback
 from homeassistant.helpers.httpx_client import get_async_client
+from homeassistant.helpers.selector import (
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 from homeassistant.helpers.service_info.hassio import HassioServiceInfo
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from homeassistant.util.network import is_ipv4_address
@@ -89,6 +95,18 @@ from .const import (
     EntityNamingPattern,
 )
 from .control_gate import DEFAULT_ALLOW_CONTEXTLESS_CONTROL
+from .house import (
+    CONF_FEED,
+    FEED_BRANCH,
+    FEED_LUGS,
+    FEED_OWN_SUPPLY,
+    OWN_SUPPLY,
+    Feed,
+    LoadedPanel,
+    feed_from_options,
+    feed_to_options,
+    loaded_panels,
+)
 from .options import (
     ALLOW_CONTEXTLESS_CONTROL,
     ENERGY_DISPLAY_PRECISION,
@@ -1776,6 +1794,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 current_ps.update(panel_settings)
                 await async_save_panel_settings(self.hass, current_ps)
                 await async_apply_panel_registration(self.hass)
+                self._pending_options = filtered_input
+                if self._other_panels():
+                    return await self.async_step_feed()
                 return self.async_create_entry(title="", data=filtered_input)
         else:
             errors = {}
@@ -1795,6 +1816,106 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     ) -> ConfigFlowResult:
         """Redirect to init for backward compatibility."""
         return await self.async_step_init(user_input)
+
+    # --- what feeds this panel ---------------------------------------------
+
+    _pending_options: dict[str, Any]
+    _pending_feed: Feed
+
+    def _other_panels(self) -> dict[str, LoadedPanel]:
+        """Return the other SPAN panels set up in this Home Assistant, by serial."""
+        own = self.config_entry.unique_id
+        return {
+            serial: panel for serial, panel in loaded_panels(self.hass).items() if serial != own
+        }
+
+    async def async_step_feed(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Ask what feeds this panel: its own supply, or another panel's lugs or branch."""
+        others = self._other_panels()
+        current = feed_from_options(self._pending_options)
+        if user_input is not None:
+            feed = _feed_from_choice(user_input[CONF_FEED])
+            if feed.type == FEED_BRANCH and feed.upstream in others:
+                if current.type == FEED_BRANCH and current.upstream == feed.upstream:
+                    feed = Feed(FEED_BRANCH, feed.upstream, current.circuit)
+                self._pending_feed = feed
+                return await self.async_step_feed_circuit()
+            return self._save_feed(feed)
+
+        choices = [SelectOptionDict(value=FEED_OWN_SUPPLY, label="Its own supply")]
+        for serial, panel in sorted(others.items(), key=lambda item: item[1].title):
+            choices.append(
+                SelectOptionDict(
+                    value=f"{FEED_LUGS}:{serial}", label=f"Feed-through lugs on {panel.title}"
+                )
+            )
+            choices.append(
+                SelectOptionDict(
+                    value=f"{FEED_BRANCH}:{serial}", label=f"A branch circuit on {panel.title}"
+                )
+            )
+        default = f"{current.type}:{current.upstream}" if current.is_fed else FEED_OWN_SUPPLY
+        if default not in {choice["value"] for choice in choices}:
+            default = FEED_OWN_SUPPLY
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_FEED, default=default): SelectSelector(
+                    SelectSelectorConfig(options=choices, mode=SelectSelectorMode.LIST)
+                )
+            }
+        )
+        return self.async_show_form(step_id="feed", data_schema=schema)
+
+    async def async_step_feed_circuit(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask which of the upstream panel's circuits feeds this panel."""
+        feed = self._pending_feed
+        if user_input is not None:
+            return self._save_feed(Feed(FEED_BRANCH, feed.upstream, str(user_input["circuit"])))
+
+        upstream = self._other_panels().get(feed.upstream or "")
+        circuits = upstream.snapshot.circuits if upstream and upstream.snapshot else {}
+        choices = [
+            SelectOptionDict(value=circuit_id, label=_circuit_label(circuit.name, circuit.tabs))
+            for circuit_id, circuit in sorted(
+                circuits.items(), key=lambda item: (min(item[1].tabs, default=0), item[0])
+            )
+        ]
+        if not choices:
+            return self.async_abort(reason="feed_no_circuits")
+        default = feed.circuit if feed.circuit in circuits else choices[0]["value"]
+        schema = vol.Schema(
+            {
+                vol.Required("circuit", default=default): SelectSelector(
+                    SelectSelectorConfig(options=choices, mode=SelectSelectorMode.DROPDOWN)
+                )
+            }
+        )
+        return self.async_show_form(
+            step_id="feed_circuit",
+            data_schema=schema,
+            description_placeholders={"upstream": upstream.title if upstream else ""},
+        )
+
+    def _save_feed(self, feed: Feed) -> ConfigFlowResult:
+        options = dict(self._pending_options)
+        options[CONF_FEED] = feed_to_options(feed)
+        return self.async_create_entry(title="", data=options)
+
+
+def _feed_from_choice(value: str) -> Feed:
+    """Read the feed select: `own_supply`, or `lugs:<serial>` / `branch:<serial>`."""
+    feed_type, _, upstream = value.partition(":")
+    if feed_type in (FEED_LUGS, FEED_BRANCH) and upstream:
+        return Feed(feed_type, upstream)
+    return OWN_SUPPLY
+
+
+def _circuit_label(name: str, tabs: list[int]) -> str:
+    """Label a circuit with its spaces, which tell apart two circuits of one name."""
+    spaces = "/".join(str(tab) for tab in sorted(tabs))
+    return f"{name} ({spaces})" if spaces else name
 
 
 # Register the config flow handler
