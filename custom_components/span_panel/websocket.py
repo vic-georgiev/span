@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.components import websocket_api
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 import voluptuous as vol
 
@@ -20,6 +20,7 @@ from .helpers import (
     circuit_has_a_priority_select,
     construct_voltage_attribute,
 )
+from .house import children, feed_to_options, house_feeds, loaded_panels, roots
 from .id_builder import build_binary_sensor_unique_id, match_circuit_id
 from .runtime import SpanPanelRuntimeData, loaded_runtime_data
 from .solar_topology import SolarTopology, solar_topology
@@ -75,8 +76,73 @@ def async_register_commands(hass: HomeAssistant) -> None:
     than something each module does for itself.
     """
     websocket_api.async_register_command(hass, handle_panel_topology)
+    websocket_api.async_register_command(hass, handle_house)
     websocket_api.async_register_command(hass, handle_adopted_list)
     websocket_api.async_register_command(hass, handle_adopted_curate)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "span_panel/house"})
+@websocket_api.require_admin
+@callback
+def handle_house(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return the house: every loaded panel, what feeds it, and in what order to show them.
+
+    Panels come back in display order -- each root, then the panels it feeds,
+    depth first -- with the device id `span_panel/panel_topology` takes, so the
+    card can fetch each panel's breakers the way it already does. Each panel
+    names its main-feed and feed-through power entities, and a fed panel its
+    feed-check sensor. `house_power_entities` are the root panels' main feeds:
+    their sum is what the house draws, every fed panel already inside it.
+    """
+    panels = loaded_panels(hass)
+    feeds = house_feeds(panels)
+    device_registry = dr.async_get(hass)
+    entity_registry = er.async_get(hass)
+
+    ordered: list[dict[str, Any]] = []
+
+    def visit(serial: str, depth: int) -> None:
+        panel = panels[serial]
+        device = device_registry.async_get_device(identifiers={(DOMAIN, serial)})
+        panel_entities = _build_panel_entity_map(serial, entity_registry, panel.entry_id)
+        feed = feeds[serial]
+        ordered.append(
+            {
+                "serial": serial,
+                "title": panel.title,
+                "entry_id": panel.entry_id,
+                "device_id": device.id if device is not None else None,
+                "depth": depth,
+                "feed": feed_to_options(feed),
+                "children": children(feeds, serial),
+                "main_feed_power": panel_entities.get("current_power"),
+                "feedthrough_power": panel_entities.get("feedthrough_power"),
+                "feed_check": entity_id_in_entry(
+                    entity_registry, panel.entry_id, "sensor", f"{serial}_feed_check"
+                ),
+            }
+        )
+        for child in children(feeds, serial):
+            visit(child, depth + 1)
+
+    for root in roots(feeds):
+        visit(root, 0)
+
+    connection.send_result(
+        msg["id"],
+        {
+            "panels": ordered,
+            "house_power_entities": [
+                panel["main_feed_power"]
+                for panel in ordered
+                if panel["depth"] == 0 and panel["main_feed_power"] is not None
+            ],
+        },
+    )
 
 
 @websocket_api.websocket_command(

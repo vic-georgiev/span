@@ -1824,7 +1824,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     def _other_panels(self) -> dict[str, LoadedPanel]:
         """Return the other SPAN panels set up in this Home Assistant, by serial."""
-        own = self.config_entry.unique_id
+        own = getattr(self.config_entry, "unique_id", None)
         return {
             serial: panel for serial, panel in loaded_panels(self.hass).items() if serial != own
         }

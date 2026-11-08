@@ -23,14 +23,18 @@ Home Assistant; the glue at the bottom finds the loaded panels.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
-from homeassistant.core import HomeAssistant
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
+from homeassistant.const import EntityCategory, UnitOfPower
+from homeassistant.core import HomeAssistant, callback
 from span_panel_api import SpanPanelSnapshot
 
 from .const import DOMAIN
+from .coordinator import SpanPanelCoordinator
+from .entity import SpanPanelEntity
 
 CONF_FEED = "feed"
 
@@ -193,6 +197,119 @@ def loaded_panels(hass: HomeAssistant) -> dict[str, LoadedPanel]:
     return panels
 
 
+def _loaded_coordinator(hass: HomeAssistant, serial: str | None) -> SpanPanelCoordinator | None:
+    """Return the coordinator of the loaded entry for `serial`, if there is one."""
+    from .runtime import loaded_runtime_data  # pylint: disable=import-outside-toplevel
+
+    if serial is None:
+        return None
+    entry = hass.config_entries.async_entry_for_domain_unique_id(DOMAIN, serial)
+    runtime = loaded_runtime_data(entry) if entry is not None else None
+    return runtime.coordinator if runtime is not None else None
+
+
 def house_feeds(panels: Mapping[str, LoadedPanel]) -> dict[str, Feed]:
     """Return the feeds that hold among the loaded panels."""
     return effective_feeds({serial: panel.feed for serial, panel in panels.items()}, panels)
+
+
+# --- the feed check, as a sensor on the fed panel ----------------------------------
+
+
+class SpanFeedCheckSensor(SpanPanelEntity, SensorEntity):
+    """Upstream's figure for this panel's feed, less this panel's own.
+
+    On the fed panel, beside its main feed. Positive when the upstream says
+    more goes out than this panel measures coming in. The two meters stream
+    separately, so a few watts either way is timing and accuracy; a gap that
+    lasts says the feed setting is wrong, or a reading is decoded wrongly.
+    Enabled and recorded so the agreement can be judged over a day, at the
+    panel's snapshot pace like any other reading.
+    """
+
+    _attr_translation_key = "feed_check"
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_suggested_display_precision = 0
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _residual_field_paths: ClassVar[tuple[str, ...]] = (
+        "panel.instant_grid_power_w",
+        "panel.feedthrough_power_w",
+    )
+
+    def __init__(
+        self, coordinator: SpanPanelCoordinator, snapshot: SpanPanelSnapshot, feed: Feed
+    ) -> None:
+        """Bind to the fed panel's coordinator and the feed its options name."""
+        super().__init__(coordinator)
+        self._feed = feed
+        self._attr_unique_id = f"{snapshot.serial_number}_feed_check"
+        self._attr_device_info = self._build_device_info(coordinator, snapshot)
+
+    _upstream_coordinator: SpanPanelCoordinator | None = None
+    _unsub_upstream: Callable[[], None] | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Also follow the upstream panel, so either side moving updates the check."""
+        await super().async_added_to_hass()
+        self._follow_upstream()
+        self.async_on_remove(self._stop_following)
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._follow_upstream()
+        super()._handle_coordinator_update()
+
+    @callback
+    def _follow_upstream(self) -> None:
+        """Listen to the upstream's coordinator; again if it reloaded, never twice."""
+        upstream = _loaded_coordinator(self.hass, self._feed.upstream)
+        if upstream is self._upstream_coordinator:
+            return
+        self._stop_following()
+        self._upstream_coordinator = upstream
+        if upstream is not None:
+            self._unsub_upstream = upstream.async_add_listener(self.async_write_ha_state)
+
+    @callback
+    def _stop_following(self) -> None:
+        if self._unsub_upstream is not None:
+            self._unsub_upstream()
+        self._unsub_upstream = None
+        self._upstream_coordinator = None
+
+    def _check(self) -> FeedCheck | None:
+        upstream = loaded_panels(self.hass).get(self._feed.upstream or "")
+        return feed_check(
+            self._feed, upstream.snapshot if upstream else None, self.coordinator.data
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the difference, or unknown until both panels have reported."""
+        check = self._check()
+        return None if check is None else round(check.difference_w, 1)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return both sides of the comparison, and where the upstream's figure comes from."""
+        check = self._check()
+        attributes: dict[str, Any] = {
+            "feed": self._feed.type,
+            "upstream_serial": self._feed.upstream,
+        }
+        if self._feed.circuit is not None:
+            attributes["upstream_circuit"] = self._feed.circuit
+        if check is not None:
+            attributes["upstream_w"] = round(check.expected_w, 1)
+            attributes["this_panel_w"] = round(check.measured_w, 1)
+        return attributes
+
+
+def create_feed_check_sensors(
+    coordinator: SpanPanelCoordinator, snapshot: SpanPanelSnapshot, options: Mapping[str, Any]
+) -> list[SpanFeedCheckSensor]:
+    """Create the feed check for a panel another panel feeds; none for one that is not."""
+    feed = feed_from_options(options)
+    return [SpanFeedCheckSensor(coordinator, snapshot, feed)] if feed.is_fed else []

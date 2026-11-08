@@ -676,3 +676,57 @@ async def test_the_real_site_stream_split_reaches_each_panels_snapshot(
     assert snap_16.circuits["21"].relay_state == "OPEN"
     assert snap_16.power_flow_grid is None  # the site's flows went to the lead panel
     await hub.async_stop()
+
+
+async def test_the_house_puts_the_16_under_the_40s_lugs(
+    hass: HomeAssistant, hass_ws_client, monkeypatch
+) -> None:
+    """A fed panel is checked against its upstream, and the house lists it once, beneath."""
+    schema_40, readings_40 = PANELS[SERIAL_40]
+    monkeypatch.setitem(
+        PANELS, SERIAL_40, (schema_40, {**readings_40, "panel/feedthrough_power": "42.000"})
+    )
+    FakeStream.backends = {}
+    entry_40 = _entry(SERIAL_40, "MAIN 40")
+    entry_16 = _entry(SERIAL_16, "MAIN 16")
+    entry_16.add_to_hass(hass)
+    entry_40.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry_16, options={**entry_16.options, "feed": {"type": "lugs", "upstream": SERIAL_40}}
+    )
+
+    with (
+        patch.object(hub_module, "discover", return_value=[SITE]),
+        patch.object(hub_module, "SiteStream", FakeStream),
+        patch.object(hub_module, "write_tokens_if_missing"),
+    ):
+        assert await hass.config_entries.async_setup(entry_40.entry_id)
+        await hass.async_block_till_done()
+
+        registry = er.async_get(hass)
+        check = registry.async_get_entity_id("sensor", DOMAIN, f"{SERIAL_16}_feed_check")
+        assert check is not None
+        assert registry.async_get_entity_id("sensor", DOMAIN, f"{SERIAL_40}_feed_check") is None
+        # The next push from the MAIN 40 reaches the check on the MAIN 16, which
+        # follows its upstream as well as its own panel.
+        entry_40.runtime_data.coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+        state = hass.states.get(check)
+        assert float(state.state) == 2.0  # the lugs say 42 W, the MAIN 16 measures 40 W
+        assert state.attributes["upstream_w"] == 42.0
+        assert state.attributes["this_panel_w"] == 40.0
+
+        client = await hass_ws_client(hass)
+        await client.send_json({"id": 1, "type": "span_panel/house"})
+        reply = await client.receive_json()
+        assert reply["success"], reply
+        panels = reply["result"]["panels"]
+        assert [(p["serial"], p["depth"]) for p in panels] == [(SERIAL_40, 0), (SERIAL_16, 1)]
+        assert panels[0]["children"] == [SERIAL_16]
+        assert panels[1]["feed"] == {"type": "lugs", "upstream": SERIAL_40}
+        assert panels[1]["feed_check"] == check
+        assert all(p["device_id"] for p in panels)
+        feedthrough = registry.async_get(panels[0]["feedthrough_power"])
+        assert feedthrough is not None and feedthrough.disabled_by is None  # on over the cloud
+        # Only the 40's main feed: the 16 is already inside it.
+        assert reply["result"]["house_power_entities"] == [panels[0]["main_feed_power"]]

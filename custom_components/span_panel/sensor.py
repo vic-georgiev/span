@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -13,6 +14,8 @@ from span_panel_api import SpanPanelSnapshot
 
 from .adoption import create_adopted_sensors
 from .const import (
+    API_VERSION_CLOUD,
+    CONF_API_VERSION,
     CONF_DEVICE_NAME,
     ENABLE_CIRCUIT_NET_ENERGY_SENSORS,
     ENABLE_PANEL_NET_ENERGY_SENSORS,
@@ -33,6 +36,7 @@ from .helpers import (
     resolve_evse_display_suffix,
     resolve_pv_display_suffixes,
 )
+from .house import create_feed_check_sensors
 from .runtime import SpanPanelConfigEntry
 from .sensor_base import SpanEnergySensorBase, SpanSensorBase
 from .sensor_circuit import SpanCircuitEnergySensor, SpanCircuitPowerSensor
@@ -148,8 +152,11 @@ async def async_setup_entry(
             pv_binding=config_entry.runtime_data.pv_binding,
         )
 
+        # The feed check, on a panel another panel feeds -- see `house`.
+        feed_checks = create_feed_check_sensors(coordinator, snapshot, config_entry.options)
+
         # Add all native sensor entities
-        async_add_entities([*entities, *adopted, *extensions])
+        async_add_entities([*entities, *adopted, *extensions, *feed_checks])
 
         # Force immediate coordinator refresh to ensure all sensors update right away
         await coordinator.async_request_refresh()
@@ -173,9 +180,18 @@ def create_panel_sensors(
         for description in PANEL_DATA_STATUS_SENSORS
     ]
 
-    # Add panel power sensors
+    # Add panel power sensors. Feed-through power is off by default because the
+    # local API's figure is unreliable (#234); over SPAN's cloud it is SPAN's own
+    # meter, the one the app shows on the lugs, so a cloud panel has it on.
+    cloud = config_entry.data.get(CONF_API_VERSION) == API_VERSION_CLOUD
     entities.extend(
-        SpanPanelPowerSensor(coordinator, description, snapshot)
+        SpanPanelPowerSensor(
+            coordinator,
+            replace(description, entity_registry_enabled_default=True)
+            if cloud and description.key == "feedthroughPowerW"
+            else description,
+            snapshot,
+        )
         for description in PANEL_POWER_SENSORS
     )
 

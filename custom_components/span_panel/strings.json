@@ -436,6 +436,9 @@
       },
       "bess_meter_power": {
         "name": "Meter Power"
+      },
+      "feed_check": {
+        "name": "Feed check"
       }
     },
     "switch": {
