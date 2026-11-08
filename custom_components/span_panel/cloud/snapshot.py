@@ -117,6 +117,15 @@ def panel_size_for(model: str, spaces: list[int]) -> int:
 # MAIN 16's spaces as 9..24.
 _LAST_SPACE_BY_MODEL = {"MAIN 40": 48, "MAIN 16": 24}
 
+# The first space of those models: the eight positions before it are the
+# main-breaker module, which holds no branch breakers, so nothing draws them.
+FIRST_BREAKER_SPACE = 9
+
+
+def first_space_for(model: str | None) -> int:
+    """Return the panel's lowest breaker space: 9 on a MAIN 40 or 16, else 1."""
+    return FIRST_BREAKER_SPACE if model in _LAST_SPACE_BY_MODEL else 1
+
 
 def _float(readings: Mapping[str, str], key: str) -> float | None:
     raw = readings.get(key)

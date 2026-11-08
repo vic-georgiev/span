@@ -11,7 +11,8 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 import voluptuous as vol
 
-from .const import DOMAIN
+from .cloud.snapshot import first_space_for
+from .const import CONF_CLOUD_MODEL, DOMAIN
 from .control_gate import ControlMode
 from .entity_resolver import entity_id_in_entry
 from .helpers import (
@@ -294,6 +295,7 @@ async def handle_panel_topology(
             "serial": snapshot.serial_number,
             "firmware": snapshot.firmware_version,
             "panel_size": snapshot.panel_size,
+            "first_space": first_space_for(config_entry.data.get(CONF_CLOUD_MODEL)),
             "device_id": msg["device_id"],
             # The panel's current device and the entry that owns it. They differ
             # from what the request carried only when that was an id saved before

@@ -537,6 +537,7 @@ class TestHandlePanelTopology:
         assert result["serial"] == "sp3-test-001"
         assert result["firmware"] == "spanos2/r202603/05"
         assert result["panel_size"] == 32
+        assert result["first_space"] == 1  # a local panel numbers from 1
         assert result["device_name"] == "SPAN Panel"
         # The panel's current device and its entry, which a consumer reads from
         # here rather than looking the id it holds up in the device list.

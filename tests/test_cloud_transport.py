@@ -728,5 +728,10 @@ async def test_the_house_puts_the_16_under_the_40s_lugs(
         assert all(p["device_id"] for p in panels)
         feedthrough = registry.async_get(panels[0]["feedthrough_power"])
         assert feedthrough is not None and feedthrough.disabled_by is None  # on over the cloud
+        await client.send_json(
+            {"id": 2, "type": "span_panel/panel_topology", "device_id": panels[0]["device_id"]}
+        )
+        topology = await client.receive_json()
+        assert topology["result"]["first_space"] == 9  # below 9 is the main-breaker module
         # Only the 40's main feed: the 16 is already inside it.
         assert reply["result"]["house_power_entities"] == [panels[0]["main_feed_power"]]
