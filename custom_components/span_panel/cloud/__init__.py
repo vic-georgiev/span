@@ -10,6 +10,8 @@ ha-span-ebus (https://github.com/mpreissner/ha-span-ebus, MIT, see `LICENSE`),
 as of vic-georgiev/ha-span-ebus@9b581f4: upstream's dev branch plus the breaker
 details (spaces, rating, voltage) carried on each circuit's properties. The
 throttle module from that branch is not included, and neither is `local/`.
+One addition: the panel's feed-through lugs meter (PanelInstant #2), decoded in
+`cloud_telemetry` and published as `panel/feedthrough_power` and `_current`.
 Everything else in this package adapts that client to the contract the rest of
 the integration already speaks (`span_panel_api`'s client protocols and
 `SpanPanelSnapshot`), so the coordinator, the entities and the dashboard run

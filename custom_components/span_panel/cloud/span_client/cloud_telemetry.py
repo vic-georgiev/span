@@ -137,6 +137,9 @@ class CircuitSample:
     combined: Channel | None = None
     line_an: Channel | None = None
     line_bn: Channel | None = None
+    # Panel only: the meter on the feed-through lugs (PanelInstant #2), the power
+    # passed on to a panel fed from this one. Zero where nothing is connected.
+    feedthrough: Channel | None = None
 
     @property
     def power_w(self) -> float | None:
@@ -262,6 +265,9 @@ def _decode_instance(sample: Message) -> CircuitSample | None:
             cs.line_an, cs.line_bn, cs.combined = _decode_double_channel(body)
         else:  # panel
             cs.line_an, cs.line_bn, cs.combined = _decode_panel(body)
+            lugs = body.get_msg_opt(2)
+            if lugs is not None:
+                cs.feedthrough = _decode_double_channel(lugs)[2]
         return cs
     return None
 

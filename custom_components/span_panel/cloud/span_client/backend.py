@@ -149,6 +149,9 @@ _PROPS_BY_KIND: dict[str, tuple[tuple[str, str, str, str], ...]] = {
         ("voltage_l1", "V", "line_an", "voltage_v"),
         ("voltage_l2", "V", "line_bn", "voltage_v"),
         ("frequency", "Hz", "combined", "freq_hz"),
+        # The feed-through lugs' meter: what this panel passes on downstream.
+        ("feedthrough_power", "W", "feedthrough", "power_w"),
+        ("feedthrough_current", "A", "feedthrough", "current_a"),
     ),
 }
 

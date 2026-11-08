@@ -36,7 +36,6 @@ _UNRESOLVED_PANEL_FIELDS = (
     "eth0_link",
     "wlan_link",
     "wwan_link",
-    "feedthrough_power_w",
     "feedthrough_energy_consumed_wh",
     "feedthrough_energy_produced_wh",
     "main_meter_energy_produced_wh",
@@ -187,7 +186,7 @@ def build_snapshot(
         firmware_version=schema.software_version or "unknown",
         main_relay_state=UNKNOWN,
         instant_grid_power_w=feed_power if feed_power is not None else panel_power,
-        feedthrough_power_w=None,
+        feedthrough_power_w=_float(readings, "panel/feedthrough_power"),
         main_meter_energy_consumed_wh=_wh(energy_kwh(f"{SITE_NODE}/grid")),
         main_meter_energy_produced_wh=None,
         feedthrough_energy_consumed_wh=None,
@@ -212,13 +211,16 @@ def build_snapshot(
 
 
 CLOUD_GAP_PATHS = frozenset(
-    [f"panel.{name}" for name in _UNRESOLVED_PANEL_FIELDS]
+    ["panel.feedthrough_power_w"]
+    + [f"panel.{name}" for name in _UNRESOLVED_PANEL_FIELDS]
     + [f"circuit.{name}" for name in _UNRESOLVED_CIRCUIT_FIELDS]
 )
 """Field paths the cloud path declares unresolved: known gaps, not defects."""
 
 
-def field_metadata(snapshot: SpanPanelSnapshot) -> dict[str, FieldMetadata]:
+def field_metadata(
+    snapshot: SpanPanelSnapshot, schema_keys: frozenset[str] = frozenset()
+) -> dict[str, FieldMetadata]:
     """Declare what the cloud path produces, and what it only stands in for."""
     meta: dict[str, FieldMetadata] = {
         "panel.instant_grid_power_w": FieldMetadata("W", "float"),
@@ -231,6 +233,10 @@ def field_metadata(snapshot: SpanPanelSnapshot) -> dict[str, FieldMetadata]:
         "circuit.relay_state": FieldMetadata(None, "enum"),
         "circuit.breaker_rating_a": FieldMetadata("A", "float"),
     }
+    if "panel/feedthrough_power" in schema_keys:
+        meta["panel.feedthrough_power_w"] = FieldMetadata("W", "float")
+    else:
+        meta["panel.feedthrough_power_w"] = FieldMetadata(None, "string", resolved=False)
     for flow_field, _sign in _SITE_FLOW_FIELDS.values():
         if getattr(snapshot, flow_field) is not None:
             meta[f"panel.{flow_field}"] = FieldMetadata("W", "float")

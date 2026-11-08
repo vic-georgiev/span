@@ -468,7 +468,16 @@ async def test_the_real_site_stream_split_reaches_each_panels_snapshot(
         # Instance 21 on both panels: the split is what keeps them apart. 56 is
         # not on the MAIN 40's circuit list, so it is its main feed.
         resources={
-            "gw-40": [sample(21, 152.4), sample(56, 2611.0)],
+            "gw-40": [
+                sample(21, 152.4),
+                sample(56, 2611.0),
+                CircuitSample(
+                    instance_id=1,
+                    kind="panel",
+                    combined=Channel(power_mw=2_611_000, current_ma=11_000),
+                    feedthrough=Channel(power_mw=355_000, current_ma=1_500),
+                ),
+            ],
             "gw-16": [sample(21, 40.0)],
         },
         site_flows={"grid": 2611.0, "home": 2611.0},
@@ -488,6 +497,9 @@ async def test_the_real_site_stream_split_reaches_each_panels_snapshot(
     assert snap_40.circuits["21"].relay_state == "CLOSED"
     assert snap_40.instant_grid_power_w == 2611.0
     assert snap_40.power_flow_grid == -2611.0
+    # The MAIN 40's feed-through lugs carry what the MAIN 16 draws.
+    assert snap_40.feedthrough_power_w == 355.0
+    assert client_40.field_metadata["panel.feedthrough_power_w"].resolved
     assert snap_16.circuits["21"].name == "Garage"
     assert snap_16.circuits["21"].instant_power_w == 40.0
     assert snap_16.circuits["21"].relay_state == "OPEN"

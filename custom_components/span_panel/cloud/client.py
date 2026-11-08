@@ -131,7 +131,7 @@ class SpanCloudClient:
             )
         snapshot = build_snapshot(self._identity, feed.schema, feed.readings, feed.energy_total)
         if self._metadata is None:
-            self._metadata = field_metadata(snapshot)
+            self._metadata = field_metadata(snapshot, frozenset(feed.schema.properties))
         return snapshot
 
     def set_snapshot_interval(self, interval: float) -> None:
