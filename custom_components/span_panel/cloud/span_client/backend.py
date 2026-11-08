@@ -172,6 +172,10 @@ CONFIG_SERVICE_LIMIT = "service_limit_a"
 CONFIG_BATTERY_LIMIT = "battery_limit_a"
 CONFIG_BACKUP_PRIORITY = "backup_priority"
 CONFIG_POWERUP_RANK = "powerup_rank"
+# Gateway links, "1" connected or "0" not.
+CONFIG_ETHERNET_LINK = "ethernet_link"
+CONFIG_WIFI_LINK = "wifi_link"
+CONFIG_CELLULAR_LINK = "cellular_link"
 RELAY_STATES = ("OPEN", "CLOSED", "UNKNOWN")
 
 # The property a node's energy is the energy *of* — see `energy_samples`.
@@ -1533,6 +1537,12 @@ class CloudBackend:
             (f"panel/{CONFIG_SERVICE_LIMIT}", panel.service_limit_a),
             (f"panel/{CONFIG_BATTERY_LIMIT}", panel.battery_limit_a),
         ]
+        for name, up in (
+            (CONFIG_ETHERNET_LINK, panel.ethernet_up),
+            (CONFIG_WIFI_LINK, panel.wifi_up),
+            (CONFIG_CELLULAR_LINK, panel.cellular_up),
+        ):
+            values.append((f"panel/{name}", None if up is None else int(up)))
         for info in circuits.values():
             node = _circuit_node(info.instance_id)
             values.append((f"{node}/{CONFIG_BACKUP_PRIORITY}", info.backup_priority))

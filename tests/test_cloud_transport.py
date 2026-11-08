@@ -315,7 +315,7 @@ def test_fields_the_cloud_does_not_carry_are_declared_unresolved() -> None:
     meta = field_metadata(snapshot)
 
     assert meta["panel.door_state"].resolved is False
-    assert meta["panel.wlan_link"].resolved is False
+    assert meta["panel.wlan_link"].resolved is True
     assert meta["circuit.always_on"].resolved is False
     assert meta["circuit.priority"].resolved is True
     assert meta["pcs.active"].resolved is False
@@ -369,6 +369,10 @@ def _main_40_traits() -> bytes:
         # PowerUp: the service limit, and the Powerwall's 11.5 kW at 240 V
         _trait(32, 1, field_message(2, field_varint(1, 200_000)) + field_varint(5, 1)),
         _trait(32, 4, field_message(2, field_varint(1, 47_917)) + field_varint(5, 4)),
+        # gateway interfaces: Ethernet and cellular connected, Wi-Fi not
+        _trait(5, 1, field_message(1, field_varint(3, 2) + field_message(5, field_varint(1, 7)))),
+        _trait(6, 1, field_message(1, field_varint(3, 3) + field_message(5, field_varint(1, 3)))),
+        _trait(4, 1, field_message(1, field_varint(3, 9) + field_message(5, field_varint(1, 7)))),
     ]
     return field_message(1, field_message(1, field_string(1, "gw-40")) + b"".join(entries))
 
@@ -385,6 +389,7 @@ def test_the_trait_snapshot_yields_priorities_ranks_and_limits() -> None:
     assert panel.main_breaker_amps == 200  # not the lugs
     assert panel.service_limit_a == 200.0
     assert panel.battery_limit_a == 47.917
+    assert (panel.ethernet_up, panel.wifi_up, panel.cellular_up) == (True, False, True)
 
 
 def test_priorities_and_powerup_reach_the_snapshot() -> None:
@@ -397,6 +402,8 @@ def test_priorities_and_powerup_reach_the_snapshot() -> None:
         "panel/main_breaker_amps": "200",
         "panel/service_limit_a": "200.0",
         "panel/battery_limit_a": "47.917",
+        "panel/ethernet_link": "1",
+        "panel/wifi_link": "0",
     }
     snapshot = build_snapshot(
         PanelIdentity(SERIAL_40, "MAIN 40"), schema, readings, lambda _k: None
@@ -414,6 +421,7 @@ def test_priorities_and_powerup_reach_the_snapshot() -> None:
     assert snapshot.pcs.feed_import_limit_a == 200.0
     assert snapshot.pcs.off_grid_import_limit_a == 47.917
     assert snapshot.pcs.active is None
+    assert (snapshot.eth0_link, snapshot.wlan_link, snapshot.wwan_link) == (True, False, False)
 
 
 def test_a_panel_without_powerup_limits_has_no_pcs() -> None:

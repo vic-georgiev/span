@@ -23,9 +23,12 @@ from span_panel_api import FieldMetadata, SpanCircuitSnapshot, SpanPanelSnapshot
 from .span_client.backend import (
     CONFIG_BACKUP_PRIORITY,
     CONFIG_BATTERY_LIMIT,
+    CONFIG_CELLULAR_LINK,
+    CONFIG_ETHERNET_LINK,
     CONFIG_MAIN_BREAKER,
     CONFIG_POWERUP_RANK,
     CONFIG_SERVICE_LIMIT,
+    CONFIG_WIFI_LINK,
     RELAY_PROPERTY,
     SITE_NODE,
 )
@@ -41,9 +44,6 @@ _UNRESOLVED_PANEL_FIELDS = (
     "door_state",
     "proximity_proven",
     "uptime_s",
-    "eth0_link",
-    "wlan_link",
-    "wwan_link",
     "feedthrough_energy_consumed_wh",
     "feedthrough_energy_produced_wh",
     "main_meter_energy_produced_wh",
@@ -267,9 +267,9 @@ def build_snapshot(
         door_state=UNKNOWN,
         proximity_proven=None,
         uptime_s=None,
-        eth0_link=False,
-        wlan_link=False,
-        wwan_link=False,
+        eth0_link=readings.get(f"panel/{CONFIG_ETHERNET_LINK}") == "1",
+        wlan_link=readings.get(f"panel/{CONFIG_WIFI_LINK}") == "1",
+        wwan_link=readings.get(f"panel/{CONFIG_CELLULAR_LINK}") == "1",
         panel_size=panel_size,
         l1_voltage=_float(readings, "panel/voltage_l1"),
         l2_voltage=_float(readings, "panel/voltage_l2"),
@@ -310,6 +310,9 @@ def field_metadata(
         "circuit.is_sheddable": FieldMetadata(None, "boolean"),
         "panel.main_breaker_rating_a": FieldMetadata("A", "integer"),
         "pcs.import_limit_a": FieldMetadata("A", "float"),
+        "panel.eth0_link": FieldMetadata(None, "boolean"),
+        "panel.wlan_link": FieldMetadata(None, "boolean"),
+        "panel.wwan_link": FieldMetadata(None, "boolean"),
     }
     if "panel/feedthrough_power" in schema_keys:
         meta["panel.feedthrough_power_w"] = FieldMetadata("W", "float")

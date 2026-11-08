@@ -71,6 +71,17 @@ FEEDER_MAIN_BREAKER = 3
 LIMIT_SERVICE = 1
 LIMIT_BATTERY = 4
 
+# The gateway's network interfaces, one trait each. Identified by the default
+# route metrics they carry, which are NetworkManager's per-type defaults
+# (Ethernet 100, Wi-Fi 600, mobile broadband 700), and checked against the SPAN
+# app's Connectivity screen: Wi-Fi up on one panel and down on the other.
+TRAIT_ETHERNET = 5
+TRAIT_WIFI = 6
+TRAIT_CELLULAR = 4
+# Interface state (interface #5 #1): 7 connected; 3 seen on a Wi-Fi radio with
+# no network configured. Anything but 7 is reported as down.
+INTERFACE_CONNECTED = 7
+
 # SwitchState. Only CLOSED means the circuit is energized; OPEN and the two
 # not-a-state values are all "not energized", but only OPEN is *known* to be.
 SWITCH_STATE_UNKNOWN = 1
@@ -274,10 +285,15 @@ class PanelTraits:
     main_breaker_amps: int | None = None
     service_limit_a: float | None = None
     battery_limit_a: float | None = None
+    # Whether each gateway interface is connected; None when the snapshot has
+    # no such interface.
+    ethernet_up: bool | None = None
+    wifi_up: bool | None = None
+    cellular_up: bool | None = None
 
 
 def parse_panel_traits(raw: bytes) -> PanelTraits:
-    """The main breaker and PowerUp limits from one panel's trait snapshot.
+    """The main breaker, PowerUp limits and network links from one panel's snapshot.
 
     Never raises: an unreadable snapshot is a panel with nothing to say.
     """
@@ -290,11 +306,19 @@ def parse_panel_traits(raw: bytes) -> PanelTraits:
 
     breaker: int | None = None
     limits: dict[int, float] = {}
+    links: dict[int, bool] = {}
+    wanted = (TRAIT_FEEDER, TRAIT_SERVICE_LIMIT, TRAIT_ETHERNET, TRAIT_WIFI, TRAIT_CELLULAR)
     for (vendor, trait, _instance), entry in sorted(traits.items()):
-        if vendor != VENDOR_SPAN or trait not in (TRAIT_FEEDER, TRAIT_SERVICE_LIMIT):
+        if vendor != VENDOR_SPAN or trait not in wanted:
             continue
         inner = _msg_or_none(entry.value, 1)
         if inner is None:
+            continue
+        if trait in (TRAIT_ETHERNET, TRAIT_WIFI, TRAIT_CELLULAR):
+            status = _msg_or_none(_msg_or_none(inner, 1), 5)
+            state = _int_or_none(status, 1)
+            if state is not None and trait not in links:
+                links[trait] = state == INTERFACE_CONNECTED
             continue
         if trait == TRAIT_FEEDER:
             if _int_or_none(inner, 2) == FEEDER_MAIN_BREAKER and breaker is None:
@@ -308,6 +332,9 @@ def parse_panel_traits(raw: bytes) -> PanelTraits:
         main_breaker_amps=breaker or None,
         service_limit_a=limits.get(LIMIT_SERVICE),
         battery_limit_a=limits.get(LIMIT_BATTERY),
+        ethernet_up=links.get(TRAIT_ETHERNET),
+        wifi_up=links.get(TRAIT_WIFI),
+        cellular_up=links.get(TRAIT_CELLULAR),
     )
 
 
