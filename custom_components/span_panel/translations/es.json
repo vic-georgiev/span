@@ -118,14 +118,16 @@
           "energy_display_precision": "Precisión de Visualización de Energía",
           "host": "Host",
           "http_port": "Puerto HTTP",
-          "power_display_precision": "Precisión de Visualización de Potencia"
+          "power_display_precision": "Precisión de Visualización de Potencia",
+          "use_span_cloud": "Usar la nube de SPAN (no oficial)"
         },
         "data_description": {
           "enable_energy_dip_compensation": "Compensar automáticamente cuando el panel reporta lecturas de energía más bajas, evitando picos en el panel de energía.",
           "energy_display_precision": "Número de lugares decimales para valores de energía (0-3)",
           "host": "Dirección IP o nombre de host del SPAN Panel",
           "http_port": "Puerto HTTP para la API del panel (predeterminado: 80)",
-          "power_display_precision": "Número de lugares decimales para valores de potencia (0-3)"
+          "power_display_precision": "Número de lugares decimales para valores de potencia (0-3)",
+          "use_span_cloud": "Para paneles que aún no tienen la API local (MAIN 40, MAIN 16): inicia sesión con tu cuenta de SPAN Home y lee los paneles como lo hace la app de SPAN. Deja el host vacío."
         },
         "description": "Ingrese los detalles de conexión para su SPAN Panel.",
         "title": "Establecer conexión al Span Panel"
@@ -143,6 +145,21 @@
       "panel_ca": {
         "title": "Leyendo el certificado del panel",
         "description": "Home Assistant obtiene la autoridad de certificación que publica su panel y comprueba que el certificado que este sirve está firmado por ella. Esto ocurre antes de que introduzca su contraseña, de modo que la contraseña y las credenciales que el panel devuelve a cambio viajan por una conexión verificada y no en claro.\n\nSeleccione **Enviar** para volver a intentarlo."
+      },
+      "cloud_login": {
+        "title": "Iniciar sesión en SPAN",
+        "description": "Inicia sesión con la cuenta que usas en la app SPAN Home. La contraseña solo se usa para iniciar sesión; Home Assistant guarda los tokens que emite SPAN, no la contraseña. Esta vía no es oficial y depende de la nube de SPAN.",
+        "data": {
+          "email": "Correo electrónico",
+          "password": "Contraseña"
+        }
+      },
+      "cloud_panels": {
+        "title": "Elegir paneles",
+        "description": "Cada panel que elijas se añade como su propia entrada de SPAN Panel.",
+        "data": {
+          "panels": "Paneles"
+        }
       }
     }
   },

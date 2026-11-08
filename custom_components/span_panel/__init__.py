@@ -73,7 +73,12 @@ from .config_flow_validation import (
     panel_rest_transport,
 )
 from .const import (
+    API_VERSION_CLOUD,
     CONF_API_VERSION,
+    CONF_CLOUD_DEVICE_UUID,
+    CONF_CLOUD_PANEL_KEY,
+    CONF_CLOUD_TOKENS,
+    CONF_CLOUD_USER_ID,
     CONF_EBUS_BROKER_HOST,
     CONF_EBUS_BROKER_PASSWORD,
     CONF_EBUS_BROKER_PORT,
@@ -460,7 +465,78 @@ async def _async_rest_tls_verdict(
     )
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: SpanPanelConfigEntry) -> bool:
+async def _async_setup_cloud(
+    hass: HomeAssistant, entry: SpanPanelConfigEntry
+) -> tuple[SpanPanelCoordinator, ControlPolicy, ControlLock]:
+    """Set up a panel read through SPAN's cloud instead of its local broker.
+
+    The unofficial transport in `cloud/`: the coordinator and every entity run
+    exactly as for a local panel, on a client that speaks the same contract.
+    What a local panel needs and the cloud does not -- the CA pin, the REST
+    hardware read, broker credentials -- is skipped, not faked.
+    """
+    # Imported here so a local-only install never loads the cloud client.
+    from .cloud.client import SpanCloudClient  # noqa: PLC0415
+    from .cloud.hub import CloudAuthFailed, async_acquire_feed  # noqa: PLC0415
+
+    data = entry.data
+    try:
+        hub, feed = await async_acquire_feed(
+            hass,
+            tokens=data[CONF_CLOUD_TOKENS],
+            user_id=data[CONF_CLOUD_USER_ID],
+            device_uuid=data[CONF_CLOUD_DEVICE_UUID],
+            panel_key=data[CONF_CLOUD_PANEL_KEY],
+        )
+    except CloudAuthFailed as err:
+        raise ConfigEntryError(
+            f"SPAN rejected the saved sign-in for {entry.title}; remove this entry and "
+            "add the panel again through the SPAN cloud option"
+        ) from err
+    except LookupError as err:
+        raise ConfigEntryError(str(err)) from err
+    except Exception as err:
+        raise ConfigEntryNotReady(f"SPAN's cloud is not reachable yet: {err}") from err
+
+    client = SpanCloudClient(
+        hass,
+        hub,
+        feed,
+        snapshot_interval=entry.options.get(SNAPSHOT_UPDATE_INTERVAL, DEFAULT_SNAPSHOT_INTERVAL),
+    )
+    try:
+        await client.connect()
+    except SpanPanelConnectionError as err:
+        await client.close()
+        raise ConfigEntryNotReady(str(err)) from err
+
+    control_policy = ControlPolicy.from_options(entry.options)
+    control_lock = ControlLock(armed=control_policy.lock_enabled)
+    client.set_control_interceptor(ControlGate(hass, entry, control_policy, control_lock))
+    entry.async_on_unload(lambda: client.set_control_interceptor(None))
+
+    coordinator = SpanPanelCoordinator(hass, client, entry)  # type: ignore[arg-type]
+    try:
+        await coordinator.async_config_entry_first_refresh()
+        await coordinator.async_setup_streaming()
+
+        if entry.options.get(
+            ENABLE_CURRENT_MONITORING, False
+        ) or await CurrentMonitor.async_is_enabled(hass, entry):
+            monitor = CurrentMonitor(hass, entry)
+            await monitor.async_start()
+            coordinator.current_monitor = monitor
+
+        graph_horizon = GraphHorizonManager(hass, entry)
+        await graph_horizon.async_load()
+        coordinator.graph_horizon_manager = graph_horizon
+    except Exception:
+        await coordinator.async_shutdown()
+        raise
+    return coordinator, control_policy, control_lock
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: SpanPanelConfigEntry) -> bool:  # noqa: C901 -- one branch per transport
     """Set up Span Panel from a config entry."""
     _LOGGER.debug("Setting up entry %s (version %s)", entry.entry_id, entry.version)
 
@@ -758,6 +834,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: SpanPanelConfigEntry) ->
             graph_horizon = GraphHorizonManager(hass, entry)
             await graph_horizon.async_load()
             coordinator.graph_horizon_manager = graph_horizon
+
+        elif api_version == API_VERSION_CLOUD:
+            coordinator, control_policy, control_lock = await _async_setup_cloud(hass, entry)
 
         else:
             raise ConfigEntryError(  # noqa: TRY301

@@ -118,14 +118,16 @@
           "energy_display_precision": "Energy Display Precision",
           "host": "Host",
           "http_port": "HTTP Port",
-          "power_display_precision": "Power Display Precision"
+          "power_display_precision": "Power Display Precision",
+          "use_span_cloud": "Use SPAN cloud instead (unofficial)"
         },
         "data_description": {
           "enable_energy_dip_compensation": "Automatically compensate when the panel reports lower energy readings, preventing spikes in the energy dashboard.",
           "energy_display_precision": "Number of decimal places for energy values (0-3)",
           "host": "IP address or hostname of SPAN Panel",
           "http_port": "HTTP port for the panel API (default: 80)",
-          "power_display_precision": "Number of decimal places for power values (0-3)"
+          "power_display_precision": "Number of decimal places for power values (0-3)",
+          "use_span_cloud": "For panels without the local API yet (MAIN 40, MAIN 16): sign in with your SPAN Home account and read the panels the way the SPAN app does. Leave the host empty."
         },
         "description": "Enter the connection details for your SPAN Panel.",
         "title": "Connect to the Span Panel"
@@ -143,6 +145,21 @@
       "panel_ca": {
         "title": "Reading the panel's certificate",
         "description": "Home Assistant fetches the certificate authority your panel publishes, and checks that the certificate the panel serves is signed by it. This happens before you enter your passphrase, so the passphrase and the credentials the panel returns for it travel over a verified connection rather than in the clear.\n\nSelect **Submit** to try again."
+      },
+      "cloud_login": {
+        "title": "Sign in to SPAN",
+        "description": "Sign in with the account you use in the SPAN Home app. The password is only used to sign in; Home Assistant keeps the tokens SPAN issues, not the password. This path is unofficial and depends on SPAN's cloud.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "cloud_panels": {
+        "title": "Choose panels",
+        "description": "Each panel you pick is added as its own SPAN Panel entry.",
+        "data": {
+          "panels": "Panels"
+        }
       }
     }
   },

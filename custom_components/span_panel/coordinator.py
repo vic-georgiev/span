@@ -952,7 +952,9 @@ class SpanPanelCoordinator(DataUpdateCoordinator[SpanPanelSnapshot]):
         """Task to handle integration reload with proper error handling."""
         try:
             _LOGGER.info("Reloading SPAN Panel integration")
-            await self.hass.async_block_till_done()
+            # No `async_block_till_done` first: called from inside a task it waits
+            # for every other task, so two panels whose first updates land together
+            # each wait for the other's reload and neither ever runs.
             await self.hass.config_entries.async_reload(self.config_entry.entry_id)
             _LOGGER.info("SPAN Panel integration reload completed successfully")
 

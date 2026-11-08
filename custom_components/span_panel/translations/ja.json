@@ -118,14 +118,16 @@
           "energy_display_precision": "エネルギー表示精度",
           "host": "ホスト",
           "http_port": "HTTPポート",
-          "power_display_precision": "電力表示精度"
+          "power_display_precision": "電力表示精度",
+          "use_span_cloud": "SPAN クラウドを使用する（非公式）"
         },
         "data_description": {
           "enable_energy_dip_compensation": "パネルがより低いエネルギー読み取り値を報告した場合に自動的に補正し、エネルギーダッシュボードのスパイクを防止します。",
           "energy_display_precision": "エネルギー値の小数点以下の桁数（0-3）",
           "host": "SPAN PanelのIPアドレスまたはホスト名",
           "http_port": "パネルAPIのHTTPポート（デフォルト：80）",
-          "power_display_precision": "電力値の小数点以下の桁数（0-3）"
+          "power_display_precision": "電力値の小数点以下の桁数（0-3）",
+          "use_span_cloud": "ローカル API がまだ提供されていないパネル（MAIN 40、MAIN 16）向け：SPAN Home アカウントでサインインし、SPAN アプリと同じ方法でパネルを読み取ります。ホストは空のままにしてください。"
         },
         "description": "SPAN Panelの接続詳細を入力してください。",
         "title": "スパンパネルに接続"
@@ -143,6 +145,21 @@
       "panel_ca": {
         "title": "パネルの証明書を読み取っています",
         "description": "Home Assistant は、パネルが公開している認証局を取得し、パネルが提供する証明書がその認証局で署名されていることを確認します。これはパスフレーズを入力する前に行われるため、パスフレーズと、その引き換えにパネルが返す認証情報は、平文ではなく検証済みの接続を通ります。\n\n**送信**を選ぶと再試行します。"
+      },
+      "cloud_login": {
+        "title": "SPAN にサインイン",
+        "description": "SPAN Home アプリで使用しているアカウントでサインインしてください。パスワードはサインインにのみ使用され、Home Assistant が保存するのは SPAN が発行したトークンで、パスワードは保存しません。この方法は非公式で、SPAN のクラウドに依存します。",
+        "data": {
+          "email": "メールアドレス",
+          "password": "パスワード"
+        }
+      },
+      "cloud_panels": {
+        "title": "パネルを選択",
+        "description": "選択した各パネルは、それぞれ個別の SPAN Panel エントリとして追加されます。",
+        "data": {
+          "panels": "パネル"
+        }
       }
     }
   },

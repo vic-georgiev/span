@@ -108,7 +108,9 @@ files = ["custom_components/span_panel"]
 exclude = [
     "venv/.*",
     ".venv/.*",
-    "scripts/.*"
+    "scripts/.*",
+    "custom_components/span_panel/cloud/span_client/.*",
+    "custom_components/span_panel/cloud/energy\\.py",
 ]
 
 # Error codes
@@ -127,6 +129,14 @@ disable_error_code = [
     "override",
     "misc",
 ]
+
+# Vendored from ha-span-ebus (see cloud/__init__.py) and tested there.
+[[tool.mypy.overrides]]
+module = [
+    "custom_components.span_panel.cloud.span_client.*",
+    "custom_components.span_panel.cloud.energy",
+]
+ignore_errors = true
 
 [tool.pydantic-mypy]
 init_forbid_extra = true
@@ -163,6 +173,11 @@ venv = ".venv"
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+# Vendored from ha-span-ebus as-is, so it can be re-synced from there.
+extend-exclude = [
+    "custom_components/span_panel/cloud/span_client",
+    "custom_components/span_panel/cloud/energy.py",
+]
 
 [tool.ruff.lint]
 select = [

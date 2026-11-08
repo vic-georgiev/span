@@ -40,6 +40,7 @@ from span_panel_api.exceptions import (
 )
 import voluptuous as vol
 
+from .cloud.config_flow import CONF_USE_SPAN_CLOUD, CloudFlowSteps
 from .config_flow_options import (
     GENERAL_OPTIONS_SCHEMA,
     get_general_options_defaults,
@@ -115,6 +116,7 @@ def get_user_data_schema(default_host: str = "") -> vol.Schema:
             vol.Optional(
                 ENABLE_ENERGY_DIP_COMPENSATION, default=NEW_INSTALL_ENERGY_DIP_COMPENSATION
             ): bool,
+            vol.Optional(CONF_USE_SPAN_CLOUD, default=False): bool,
         }
     )
 
@@ -159,7 +161,7 @@ class TriggerFlowType(enum.Enum):
     UPDATE_ENTRY = enum.auto()
 
 
-class SpanPanelConfigFlow(config_entries.ConfigFlow):
+class SpanPanelConfigFlow(CloudFlowSteps, config_entries.ConfigFlow):
     """Handle a config flow for Span Panel."""
 
     VERSION = 7
@@ -625,6 +627,9 @@ class SpanPanelConfigFlow(config_entries.ConfigFlow):
             self.energy_display_precision,
             user_input,
         )
+
+        if user_input.get(CONF_USE_SPAN_CLOUD):
+            return await self.async_step_cloud_login()
 
         host: str = user_input.get(CONF_HOST, "").strip()
         self._http_port = int(user_input.get(CONF_HTTP_PORT, 80))

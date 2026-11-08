@@ -118,14 +118,16 @@
           "energy_display_precision": "Précision d'Affichage d'Énergie",
           "host": "Hôte",
           "http_port": "Port HTTP",
-          "power_display_precision": "Précision d'Affichage de Puissance"
+          "power_display_precision": "Précision d'Affichage de Puissance",
+          "use_span_cloud": "Utiliser le cloud SPAN (non officiel)"
         },
         "data_description": {
           "enable_energy_dip_compensation": "Compenser automatiquement lorsque le panneau signale des lectures d'énergie inférieures, évitant les pics dans le tableau de bord énergétique.",
           "energy_display_precision": "Nombre de décimales pour les valeurs d'énergie (0-3)",
           "host": "Adresse IP ou nom d'hôte du SPAN Panel",
           "http_port": "Port HTTP pour l'API du panneau (par défaut : 80)",
-          "power_display_precision": "Nombre de décimales pour les valeurs de puissance (0-3)"
+          "power_display_precision": "Nombre de décimales pour les valeurs de puissance (0-3)",
+          "use_span_cloud": "Pour les panneaux sans API locale pour l'instant (MAIN 40, MAIN 16) : connectez-vous avec votre compte SPAN Home et lisez les panneaux comme le fait l'application SPAN. Laissez l'hôte vide."
         },
         "description": "Entrez les détails de connexion pour votre SPAN Panel.",
         "title": "Connectez-vous au Span Panel"
@@ -143,6 +145,21 @@
       "panel_ca": {
         "title": "Lecture du certificat du panneau",
         "description": "Home Assistant récupère l'autorité de certification publiée par votre panneau et vérifie que le certificat présenté par celui-ci est signé par elle. Cela se produit avant que vous ne saisissiez votre mot de passe : celui-ci, ainsi que les identifiants que le panneau renvoie en échange, transitent donc par une connexion vérifiée plutôt qu'en clair.\n\nSélectionnez **Valider** pour réessayer."
+      },
+      "cloud_login": {
+        "title": "Se connecter à SPAN",
+        "description": "Connectez-vous avec le compte que vous utilisez dans l'application SPAN Home. Le mot de passe sert uniquement à la connexion ; Home Assistant conserve les jetons émis par SPAN, pas le mot de passe. Cette voie n'est pas officielle et dépend du cloud SPAN.",
+        "data": {
+          "email": "E-mail",
+          "password": "Mot de passe"
+        }
+      },
+      "cloud_panels": {
+        "title": "Choisir les panneaux",
+        "description": "Chaque panneau choisi est ajouté comme sa propre entrée SPAN Panel.",
+        "data": {
+          "panels": "Panneaux"
+        }
       }
     }
   },

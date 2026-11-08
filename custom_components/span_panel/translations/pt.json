@@ -118,14 +118,16 @@
           "energy_display_precision": "Precisão de Exibição de Energia",
           "host": "Anfitrião",
           "http_port": "Porta HTTP",
-          "power_display_precision": "Precisão de Exibição de Potência"
+          "power_display_precision": "Precisão de Exibição de Potência",
+          "use_span_cloud": "Usar a nuvem da SPAN (não oficial)"
         },
         "data_description": {
           "enable_energy_dip_compensation": "Compensar automaticamente quando o painel reporta leituras de energia mais baixas, prevenindo picos no painel de energia.",
           "energy_display_precision": "Número de casas decimais para valores de energia (0-3)",
           "host": "Endereço IP ou nome do host do SPAN Panel",
           "http_port": "Porta HTTP para a API do painel (padrão: 80)",
-          "power_display_precision": "Número de casas decimais para valores de potência (0-3)"
+          "power_display_precision": "Número de casas decimais para valores de potência (0-3)",
+          "use_span_cloud": "Para painéis que ainda não têm a API local (MAIN 40, MAIN 16): entre com a sua conta SPAN Home e leia os painéis como o app da SPAN faz. Deixe o host vazio."
         },
         "description": "Insira os detalhes de conexão para seu SPAN Panel.",
         "title": "Ligar ao Painel Span"
@@ -143,6 +145,21 @@
       "panel_ca": {
         "title": "A ler o certificado do painel",
         "description": "O Home Assistant obtém a autoridade de certificação que o seu painel publica e verifica que o certificado servido pelo painel está assinado por ela. Isto acontece antes de introduzir a sua frase-passe, pelo que a frase-passe e as credenciais que o painel devolve em troca viajam por uma ligação verificada e não em claro.\n\nSelecione **Submeter** para tentar novamente."
+      },
+      "cloud_login": {
+        "title": "Entrar na SPAN",
+        "description": "Entre com a conta que você usa no app SPAN Home. A senha é usada apenas para entrar; o Home Assistant guarda os tokens emitidos pela SPAN, não a senha. Este caminho não é oficial e depende da nuvem da SPAN.",
+        "data": {
+          "email": "E-mail",
+          "password": "Senha"
+        }
+      },
+      "cloud_panels": {
+        "title": "Escolher painéis",
+        "description": "Cada painel escolhido é adicionado como sua própria entrada de SPAN Panel.",
+        "data": {
+          "panels": "Painéis"
+        }
       }
     }
   },

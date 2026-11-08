@@ -11,6 +11,13 @@ CONF_DEVICE_NAME = "device_name"
 
 # v2 API / MQTT configuration (stored in config entry data)
 CONF_API_VERSION = "api_version"
+# SPAN cloud transport (unofficial): entries with api_version "cloud".
+API_VERSION_CLOUD = "cloud"
+CONF_CLOUD_TOKENS = "cloud_tokens"
+CONF_CLOUD_USER_ID = "cloud_user_id"
+CONF_CLOUD_DEVICE_UUID = "cloud_device_uuid"
+CONF_CLOUD_PANEL_KEY = "cloud_panel_key"
+CONF_CLOUD_MODEL = "cloud_model"
 CONF_EBUS_BROKER_HOST = "ebus_broker_host"
 CONF_EBUS_BROKER_USERNAME = "ebus_broker_username"
 CONF_EBUS_BROKER_PASSWORD = "ebus_broker_password"  # nosec B105
