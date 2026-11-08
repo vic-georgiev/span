@@ -93,7 +93,9 @@ def panel_size_for(model: str, spaces: list[int]) -> int:
 
 
 # Models whose numbering does not start at 1, by their highest space number.
-_LAST_SPACE_BY_MODEL = {"MAIN 40": 48}
+# Both start at 9, after the main-breaker module's eight: the SPAN app shows a
+# MAIN 16's spaces as 9..24.
+_LAST_SPACE_BY_MODEL = {"MAIN 40": 48, "MAIN 16": 24}
 
 
 def _float(readings: Mapping[str, str], key: str) -> float | None:

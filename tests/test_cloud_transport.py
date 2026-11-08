@@ -252,12 +252,13 @@ def test_snapshot_maps_a_main_40_onto_the_integrations_terms() -> None:
 
 def test_space_numbers_are_never_renumbered() -> None:
     """Breakers keep SPAN's numbers whichever spaces are in use."""
-    schema = _panel_schema(SERIAL_16, {21: ("A", (1,)), 22: ("B", (16,))}, flows=False)
+    schema = _panel_schema(SERIAL_16, {21: ("A", (9,)), 22: ("B", (24,))}, flows=False)
     snapshot = build_snapshot(PanelIdentity(SERIAL_16, "MAIN 16"), schema, {}, lambda _key: None)
 
-    assert snapshot.panel_size == 16
-    assert snapshot.circuits["21"].tabs == [1]
-    assert snapshot.circuits["22"].tabs == [16]
+    # As the SPAN app shows a MAIN 16: 9..24.
+    assert snapshot.panel_size == 24
+    assert snapshot.circuits["21"].tabs == [9]
+    assert snapshot.circuits["22"].tabs == [24]
 
 
 def test_the_largest_panel_takes_the_sites_flows() -> None:
