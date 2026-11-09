@@ -306,6 +306,18 @@ class SpanCloudClient:
         await self._after(command, outcome)
         return outcome
 
+    async def rename_circuit(self, circuit_id: str, name: str) -> str:
+        """Rename one circuit on the panel through SPAN's cloud.
+
+        Returns the name as sent. Raises `ValueError` for a name or circuit the
+        panel cannot take, and whatever the call raises if SPAN rejects it; the
+        caller reports either. Renaming moves nothing electrical, so it does not
+        pass the switch gate.
+        """
+        return await self._hass.async_add_executor_job(
+            self._feed.backend.rename_circuit, node_for_circuit(circuit_id), name
+        )
+
     async def set_circuit_priority(self, circuit_id: str, priority: str) -> PublishOutcome:
         """Refuse: shed priority is not writable over the cloud yet."""
         return await self._unsupported(circuit_id, "shed-priority", priority)

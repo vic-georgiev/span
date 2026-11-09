@@ -1,4 +1,5 @@
 {
+  "can_rename": false,
   "circuits": {
     "266eb903e50116147fb212879e812cd7": {
       "always_on": false,

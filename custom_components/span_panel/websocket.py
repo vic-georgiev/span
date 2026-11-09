@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping
+import logging
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components import websocket_api
@@ -68,6 +69,9 @@ _SENSOR_ROLE_SUFFIXES: dict[str, str] = {
 }
 
 
+_LOGGER = logging.getLogger(__name__)
+
+
 def async_register_commands(hass: HomeAssistant) -> None:
     """Register WebSocket commands for the Span Panel integration.
 
@@ -78,8 +82,58 @@ def async_register_commands(hass: HomeAssistant) -> None:
     """
     websocket_api.async_register_command(hass, handle_panel_topology)
     websocket_api.async_register_command(hass, handle_house)
+    websocket_api.async_register_command(hass, handle_rename_circuit)
     websocket_api.async_register_command(hass, handle_adopted_list)
     websocket_api.async_register_command(hass, handle_adopted_curate)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "span_panel/rename_circuit",
+        vol.Required("device_id"): str,
+        vol.Required("circuit_id"): str,
+        vol.Required("name"): str,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def handle_rename_circuit(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Rename one circuit on the panel itself, as the SPAN app's edit screen does.
+
+    Answers `{"name": <the name as sent>}`. The entities and the card follow
+    once the panel's new description arrives, a few seconds later. Errors:
+    `not_supported` when this connection cannot write names (only SPAN's cloud
+    can today), `invalid` for an empty or overlong name or an unknown circuit,
+    `rename_failed` when SPAN refuses.
+    """
+    resolved = resolve_panel_device(hass, connection, msg)
+    if resolved is None:
+        return
+    _device_entry, config_entry = resolved
+    runtime_data = loaded_runtime_data(config_entry)
+    if config_entry.state is not ConfigEntryState.LOADED or runtime_data is None:
+        connection.send_error(msg["id"], "not_loaded", "SPAN Panel integration is not loaded")
+        return
+    rename = getattr(runtime_data.coordinator.client, "rename_circuit", None)
+    if rename is None:
+        connection.send_error(
+            msg["id"], "not_supported", "Renaming circuits needs the SPAN cloud connection"
+        )
+        return
+    try:
+        name = await rename(msg["circuit_id"], msg["name"])
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid", str(err))
+        return
+    except Exception as err:  # noqa: BLE001 — SPAN's refusal, reported to the caller
+        _LOGGER.warning("Renaming circuit %s failed: %s", msg["circuit_id"], err)
+        connection.send_error(msg["id"], "rename_failed", str(err))
+        return
+    connection.send_result(msg["id"], {"name": name})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "span_panel/house"})
@@ -296,6 +350,8 @@ async def handle_panel_topology(
             "firmware": snapshot.firmware_version,
             "panel_size": snapshot.panel_size,
             "first_space": first_space_for(config_entry.data.get(CONF_CLOUD_MODEL)),
+            # Whether `span_panel/rename_circuit` can write names on this panel.
+            "can_rename": hasattr(coordinator.client, "rename_circuit"),
             "device_id": msg["device_id"],
             # The panel's current device and the entry that owns it. They differ
             # from what the request carried only when that was an id saved before

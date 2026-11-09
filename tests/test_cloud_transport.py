@@ -28,12 +28,23 @@ from custom_components.span_panel.cloud.snapshot import (
     build_snapshot,
     field_metadata,
 )
-from custom_components.span_panel.cloud.span_client.backend import PanelInfo, SiteInfo
+from custom_components.span_panel.cloud.span_client import cloud_grpc
+from custom_components.span_panel.cloud.span_client.backend import (
+    CloudBackend,
+    PanelInfo,
+    SiteInfo,
+)
+from custom_components.span_panel.cloud.span_client.cloud_commands import (
+    MAX_CIRCUIT_NAME_LENGTH,
+    build_rename_request,
+    clean_circuit_name,
+)
 from custom_components.span_panel.cloud.span_client.cloud_pb import (
     field_bytes,
     field_message,
     field_string,
     field_varint,
+    parse,
 )
 from custom_components.span_panel.cloud.span_client.cloud_traits import (
     parse_panel_traits,
@@ -160,6 +171,7 @@ class FakeBackend:
         """Start with no commands and no polls."""
         self.serial = serial
         self.commands: list[tuple[str, str]] = []
+        self.renames: list[tuple[str, str]] = []
         self.on_reading: Callable[[Reading], None] | None = None
         self.started = False
         self.stopped = False
@@ -183,6 +195,12 @@ class FakeBackend:
         self.commands.append((key, value))
         assert self.on_reading is not None
         self.on_reading(Reading(key=key, value=value, timestamp=0.0))
+
+    def rename_circuit(self, node_id: str, name: str) -> str:
+        """Record the rename, cleaning the name as the real backend does."""
+        cleaned = clean_circuit_name(name)
+        self.renames.append((node_id, cleaned))
+        return cleaned
 
     def fetch_energy(
         self, covered_through_ms: int = 0, *, time_zone: str = "UTC"
@@ -746,6 +764,34 @@ async def test_the_house_puts_the_16_under_the_40s_lugs(
         )
         topology = await client.receive_json()
         assert topology["result"]["first_space"] == 9  # below 9 is the main-breaker module
+        assert topology["result"]["can_rename"] is True  # the cloud writes names
+
+        await client.send_json(
+            {
+                "id": 3,
+                "type": "span_panel/rename_circuit",
+                "device_id": panels[0]["device_id"],
+                "circuit_id": "21",
+                "name": "  Kitchen   outlets ",
+            }
+        )
+        renamed = await client.receive_json()
+        assert renamed["success"], renamed
+        assert renamed["result"] == {"name": "Kitchen outlets"}
+        assert FakeStream.backends[SERIAL_40].renames == [("circuit-21", "Kitchen outlets")]
+
+        await client.send_json(
+            {
+                "id": 4,
+                "type": "span_panel/rename_circuit",
+                "device_id": panels[0]["device_id"],
+                "circuit_id": "21",
+                "name": "   ",
+            }
+        )
+        refused = await client.receive_json()
+        assert not refused["success"]
+        assert refused["error"]["code"] == "invalid"
         # Only the 40's main feed: the 16 is already inside it.
         assert reply["result"]["house_power_entities"] == [panels[0]["main_feed_power"]]
 
@@ -812,3 +858,112 @@ def test_cloud_energy_is_whole_wh() -> None:
     assert _wh(0.7744128) == 774.0
     assert _wh(0.7746) == 775.0
     assert _wh(None) is None
+
+
+def _labelled_circuit_traits(name: str = "Kitchen") -> bytes:
+    """Build a circuit (1/15 #21) whose position points at its label (1/16 #70)."""
+    position = field_message(1, _trait_ref(16, 70))
+    circuit = _trait(15, 21, field_varint(2, 1) + field_message(11, position))
+    label = _trait(16, 70, field_varint(3, 20) + field_string(4, name))
+    return field_message(1, field_message(1, field_string(1, "gw-40")) + circuit + label)
+
+
+def test_a_circuit_knows_where_its_name_lives() -> None:
+    """The label's own instance is what a rename addresses, not the breaker's."""
+    info = parse_trait_snapshot(_labelled_circuit_traits())[21]
+    assert info.label == "Kitchen"
+    assert info.label_target is not None
+    assert info.label_target.resource_id == "gw-40"
+    assert info.label_target.instance_id == 70
+    assert info.label_target.metadata == (1, 4, 16, None)
+
+
+def test_a_rename_carries_only_the_name() -> None:
+    """`edit_circuit { name }` on 1/16: nothing that could reset the type, voltage or amps."""
+    target = parse_trait_snapshot(_labelled_circuit_traits())[21].label_target
+    body = build_rename_request(target, " Hot  tub ", requester_id="user-1", request_id="req-1")
+
+    message = parse(body).get_msg(1)
+    metadata = message.get_msg(1)
+    assert (metadata.get_int_opt(1), metadata.get_int_opt(3)) == (1, 16)
+    instance = message.get_msg(2)
+    assert instance.get_msg(1).get_str(1) == "gw-40"
+    assert instance.get_msg(2).get_int_opt(1) == 70
+    command = message.get_msg(14)
+    request = command.get_msg(1)
+    assert request.get_msg(2).get_str(1) == "user-1"
+    payload = parse(command.get_msg(2).get_bytes(1))
+    edit = payload.get_msg(2)
+    assert edit.get_str(1) == "Hot tub"
+    assert payload.get_msg(1) is None  # not the appliance request
+
+
+def test_names_are_cleaned_and_checked_before_they_leave() -> None:
+    """Trimmed and single-spaced; an empty or overlong name never reaches the panel."""
+    assert clean_circuit_name("  Pool   pump ") == "Pool pump"
+    for bad in ("", "   ", "x" * (MAX_CIRCUIT_NAME_LENGTH + 1)):
+        try:
+            clean_circuit_name(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"{bad!r} was accepted")
+
+
+class _RecordingGrpc:
+    """Stands in for CloudGrpcClient, recording what would have been posted."""
+
+    sent: list[bytes] = []
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Take the client's arguments and ignore them."""
+
+    def __enter__(self) -> _RecordingGrpc:
+        """Open nothing."""
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        """Close nothing."""
+
+    def send_messages(self, request: bytes) -> bytes:
+        """Record the request and ack it."""
+        self.sent.append(request)
+        return b""
+
+
+def test_the_backend_renames_and_describes_the_panel_again(tmp_path, monkeypatch) -> None:
+    """A rename posts once, and the next schema carries the new name."""
+    backend = CloudBackend(tmp_path / "tokens.json", "device-uuid", user_id="user-1")
+    backend._adopt_circuits(parse_trait_snapshot(_labelled_circuit_traits()))
+    backend._schema_sent = True
+    monkeypatch.setattr(backend, "_access_token", lambda: "token")
+    monkeypatch.setattr(backend, "_requester_id", lambda token: "user-1")
+    monkeypatch.setattr(backend, "_request_refresh", lambda delay: None)
+    monkeypatch.setattr(cloud_grpc, "CloudGrpcClient", _RecordingGrpc)
+    _RecordingGrpc.sent = []
+
+    assert backend.rename_circuit("circuit-21", "Pool pump") == "Pool pump"
+    assert len(_RecordingGrpc.sent) == 1
+    assert backend._circuits[21].label == "Pool pump"
+    assert backend._schema_sent is False  # the new name goes out with the next frame
+
+    # Asking for the name it already has sends nothing.
+    assert backend.rename_circuit("circuit-21", " Pool pump ") == "Pool pump"
+    assert len(_RecordingGrpc.sent) == 1
+
+    try:
+        backend.rename_circuit("circuit-99", "Nowhere")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("an unknown circuit was renamed")
+
+
+def test_a_rename_made_in_the_span_app_reaches_the_schema(tmp_path) -> None:
+    """The trait refresh that brings a new name also releases the schema again."""
+    backend = CloudBackend(tmp_path / "tokens.json", "device-uuid")
+    backend._adopt_circuits(parse_trait_snapshot(_labelled_circuit_traits("Kitchen")))
+    backend._schema_sent = True
+    backend._adopt_circuits(parse_trait_snapshot(_labelled_circuit_traits("Kitchen")))
+    assert backend._schema_sent is True  # nothing moved, nothing to re-describe
+    backend._adopt_circuits(parse_trait_snapshot(_labelled_circuit_traits("Pantry")))
+    assert backend._schema_sent is False

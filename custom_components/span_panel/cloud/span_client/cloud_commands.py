@@ -1,4 +1,4 @@
-"""Build the trait command that opens or closes a circuit's relay.
+"""Build the trait commands that act on a circuit: its relay, and its name.
 
 SPAN has no per-trait RPC. Every trait command — a breaker toggle included — goes
 out on one method, `MobileFrontendService/SendMessages`, as a `TraitMessage`
@@ -154,6 +154,73 @@ def build_trait_message(
     command = field_message(1, request_metadata) + field_message(2, field_message(1, payload))
 
     return field_message(1, metadata) + field_message(2, instance) + field_message(14, command)
+
+
+# CircuitTrait (1/16): the circuit's label — type, voltage, breaker amps and the
+# name the homeowner gave it. Its command message is
+#
+#     CircuitCommandRequests { 1: update_appliance_request, 2: edit_circuit }
+#
+# and the homeowner's edit is `HomeownerEditCircuit { 1: name }`, the only field
+# (recovered from the app bundle; docs/reference/span-cloud-schema.txt in
+# ha-span-ebus). Because the edit names only the name, it cannot touch the
+# type, voltage or amps stored beside it. Which message `edit_circuit` carries
+# is not in the bundle's field literal; HomeownerEditCircuit is the homeowner
+# edit, matching `homeowner_update_circuit_breaker_request` on the breaker. Had
+# the panel wanted the installer's `InstallerSimpleEditCircuit { 1: amps,
+# 2: name }` instead, a string in its varint field 1 is malformed, not misread.
+TRAIT_CIRCUIT_LABEL = 16
+_REQUEST_EDIT_CIRCUIT = 2
+
+# Longest name we send. The SPAN app's limit is not recovered; this is generous
+# for a breaker label and keeps a pasted paragraph off the panel.
+MAX_CIRCUIT_NAME_LENGTH = 64
+
+# Any trait instance is addressed the same way as a switch: who owns it, which
+# instance, and the trait's metadata as the snapshot declared it.
+TraitTarget = SwitchTarget
+
+
+def clean_circuit_name(name: str) -> str:
+    """The name as it will be sent: trimmed, single-spaced, and checked.
+
+    Raises `ValueError` for an empty name or one longer than
+    `MAX_CIRCUIT_NAME_LENGTH`, so nothing half-valid reaches the panel.
+    """
+    cleaned = " ".join(name.split())
+    if not cleaned:
+        raise ValueError("a circuit name cannot be empty")
+    if len(cleaned) > MAX_CIRCUIT_NAME_LENGTH:
+        raise ValueError(f"a circuit name can be at most {MAX_CIRCUIT_NAME_LENGTH} characters")
+    return cleaned
+
+
+def edit_circuit_payload(name: str) -> bytes:
+    """`CircuitCommandRequests { 2: edit_circuit { 1: name } }`."""
+    return field_message(_REQUEST_EDIT_CIRCUIT, field_string(1, clean_circuit_name(name)))
+
+
+def build_rename_request(
+    target: TraitTarget,
+    name: str,
+    *,
+    requester_id: str,
+    request_id: str | None = None,
+    timeout_ms: int = DEFAULT_TIMEOUT_MS,
+) -> bytes:
+    """A ready-to-post `SendMessages` body that renames one circuit.
+
+    `target` is the circuit's label instance (trait 1/16), not its breaker.
+    """
+    return build_send_messages(
+        build_trait_message(
+            target,
+            edit_circuit_payload(name),
+            requester_id=requester_id,
+            request_id=request_id,
+            timeout_ms=timeout_ms,
+        )
+    )
 
 
 def build_send_messages(*messages: bytes) -> bytes:

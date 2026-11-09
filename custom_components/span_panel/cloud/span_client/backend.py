@@ -1441,6 +1441,54 @@ class CloudBackend:
         self._emit_relay_reading(self._circuits[info.instance_id])
         self._request_refresh(POST_COMMAND_REFRESH_SECONDS)
 
+    def rename_circuit(self, node_id: str, name: str) -> str:
+        """Rename a circuit on the panel, as the SPAN app's edit screen does.
+
+        `node_id` is `circuit-<instance>`. Returns the name as sent (trimmed and
+        single-spaced). Raises `ValueError` for an unknown circuit, one with no
+        label to edit, or a name that fails `clean_circuit_name`; `GrpcError` if
+        SPAN rejects the call.
+
+        The new name is adopted at once so the panel's schema is described again
+        with it, and the trait snapshot is re-read shortly after to replace that
+        with what the panel actually stored.
+        """
+        info = self._circuit_for_node(node_id)
+        if info is None:
+            raise ValueError(f"no circuit {node_id} on this panel")
+        if info.label_target is None:
+            raise ValueError(f"circuit {node_id} has no name the panel lets us edit")
+        cleaned = cloud_commands.clean_circuit_name(name)
+        if cleaned == info.label:
+            return cleaned
+
+        access_token = self._access_token()
+        request = cloud_commands.build_rename_request(
+            info.label_target, cleaned, requester_id=self._requester_id(access_token)
+        )
+        with cloud_grpc.CloudGrpcClient(access_token, host=self._host) as grpc:
+            grpc.send_messages(request)
+        log.info("rename accepted for %s -> %r", node_id, cleaned)
+
+        self._adopt_circuits({**self._circuits, info.instance_id: replace(info, label=cleaned)})
+        self._request_refresh(POST_COMMAND_REFRESH_SECONDS)
+        return cleaned
+
+    def _adopt_circuits(self, circuits: dict[int, CircuitInfo]) -> None:
+        """Take a fresh view of the circuits, describing the panel again if a name moved.
+
+        The schema carries the circuit names and is otherwise sent once, so a
+        rename — ours, or one made in the SPAN app — would never reach Home
+        Assistant without this.
+        """
+        renamed = any(
+            info.label != (self._circuits[instance].label if instance in self._circuits else info.label)
+            for instance, info in circuits.items()
+        )
+        self._circuits = circuits
+        if renamed:
+            self._schema_sent = False
+
     def fetch_energy(
         self, covered_through_ms: int = 0, *, time_zone: str = "UTC"
     ) -> list[EnergySample]:
@@ -1802,7 +1850,7 @@ class CloudBackend:
         raw = self.subscribe(channel)
         circuits = parse_trait_snapshot(raw)
         if circuits:
-            self._circuits = circuits
+            self._adopt_circuits(circuits)
             if announce:
                 for info in circuits.values():
                     if info.switch is not None:
@@ -2015,7 +2063,7 @@ class SiteStream(CloudBackend):
         for key, panel in self._panels.items():
             circuits = parse_trait_snapshot(parts.get(key, b""))
             if circuits:
-                panel._circuits = circuits
+                panel._adopt_circuits(circuits)
                 if announce:
                     for info in circuits.values():
                         if info.switch is not None:

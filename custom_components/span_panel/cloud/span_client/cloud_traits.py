@@ -143,6 +143,9 @@ class CircuitInfo:
     # 1/15 field 2: 1 a branch circuit, 3 the battery's breaker. Last, because
     # callers build this positionally.
     kind: int | None = None
+    # How to address this circuit's label (trait 1/16) to rename it. `None`
+    # when the circuit has no label instance, as the battery's breaker does not.
+    label_target: SwitchTarget | None = None
 
     @property
     def display_name(self) -> str:
@@ -248,11 +251,19 @@ def _circuit_from(
     space_ids = [i for vendor, trait, i in refs if (vendor, trait) == (VENDOR_SPAN, TRAIT_SPACE)]
 
     label = amps = None
+    label_target: SwitchTarget | None = None
     if label_ids:
         label_body = _trait_inner(traits, TRAIT_LABEL, label_ids[0])
         if label_body is not None:
             label = label_body.get_str(4)
             amps = label_body.get_int_opt(3)
+        label_entry = traits.get((VENDOR_SPAN, TRAIT_LABEL, label_ids[0]))
+        if label_entry is not None and label_entry.resource_id is not None:
+            label_target = SwitchTarget(
+                resource_id=label_entry.resource_id,
+                instance_id=label_ids[0],
+                metadata=label_entry.metadata,
+            )
 
     spaces = []
     for space_id in space_ids:
@@ -272,6 +283,7 @@ def _circuit_from(
         backup_priority=priority,
         powerup_rank=rank,
         shed_policy=policy,
+        label_target=label_target,
     )
 
 
