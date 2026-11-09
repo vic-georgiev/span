@@ -170,6 +170,8 @@ def build_trait_message(
 # voltage or amps. A first attempt, `CircuitTrait.edit_circuit` on 1/16, was
 # acknowledged and silently not applied on a MAIN 40 (Nov 2026): SendMessages
 # only acknowledges receipt, so a rename is confirmed by re-reading the name.
+# This breaker form was confirmed on a live MAIN 40 the same day: the new name
+# appeared in the SPAN app.
 TRAIT_CIRCUIT_BREAKER = 15
 _REQUEST_HOMEOWNER_UPDATE_BREAKER = 3
 _ONE_POLE_STANDARD = 10
