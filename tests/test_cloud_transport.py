@@ -28,10 +28,14 @@ from custom_components.span_panel.cloud.snapshot import (
     build_snapshot,
     field_metadata,
 )
-from custom_components.span_panel.cloud.span_client import cloud_grpc
+from custom_components.span_panel.cloud.span_client import (
+    backend as backend_module,
+    cloud_grpc,
+)
 from custom_components.span_panel.cloud.span_client.backend import (
     CloudBackend,
     PanelInfo,
+    RenameNotApplied,
     SiteInfo,
 )
 from custom_components.span_panel.cloud.span_client.cloud_commands import (
@@ -860,42 +864,70 @@ def test_cloud_energy_is_whole_wh() -> None:
     assert _wh(None) is None
 
 
-def _labelled_circuit_traits(name: str = "Kitchen") -> bytes:
-    """Build a circuit (1/15 #21) whose position points at its label (1/16 #70)."""
-    position = field_message(1, _trait_ref(16, 70))
-    circuit = _trait(15, 21, field_varint(2, 1) + field_message(11, position))
+def _labelled_circuit_traits(name: str = "Kitchen", spaces: tuple[int, ...] = (9,)) -> bytes:
+    """Build a circuit (1/15 #21) whose position points at its label (1/16 #70) and spaces."""
+    refs = field_message(1, _trait_ref(16, 70)) + b"".join(
+        field_message(2, _trait_ref(17, 80 + i)) for i in range(len(spaces))
+    )
+    field = 11 if len(spaces) == 1 else 13
+    circuit = _trait(15, 21, field_varint(2, 1) + field_message(field, refs))
     label = _trait(16, 70, field_varint(3, 20) + field_string(4, name))
-    return field_message(1, field_message(1, field_string(1, "gw-40")) + circuit + label)
+    space_entries = b"".join(
+        _trait(17, 80 + i, field_varint(3, space)) for i, space in enumerate(spaces)
+    )
+    return field_message(
+        1, field_message(1, field_string(1, "gw-40")) + circuit + label + space_entries
+    )
 
 
-def test_a_circuit_knows_where_its_name_lives() -> None:
-    """The label's own instance is what a rename addresses, not the breaker's."""
+def test_a_circuit_is_renamed_through_its_breaker() -> None:
+    """The breaker's own instance (1/15) is what a rename addresses."""
     info = parse_trait_snapshot(_labelled_circuit_traits())[21]
     assert info.label == "Kitchen"
-    assert info.label_target is not None
-    assert info.label_target.resource_id == "gw-40"
-    assert info.label_target.instance_id == 70
-    assert info.label_target.metadata == (1, 4, 16, None)
+    assert info.spaces == (9,)
+    assert info.rename_target is not None
+    assert info.rename_target.resource_id == "gw-40"
+    assert info.rename_target.instance_id == 21
+    assert info.rename_target.metadata == (1, 4, 15, None)
 
 
-def test_a_rename_carries_only_the_name() -> None:
-    """`edit_circuit { name }` on 1/16: nothing that could reset the type, voltage or amps."""
-    target = parse_trait_snapshot(_labelled_circuit_traits())[21].label_target
-    body = build_rename_request(target, " Hot  tub ", requester_id="user-1", request_id="req-1")
-
+def _rename_edit(body: bytes) -> tuple[Any, Any]:
+    """Unwrap a rename request to its trait message and its breaker update."""
     message = parse(body).get_msg(1)
+    payload = parse(message.get_msg(14).get_msg(2).get_bytes(1))
+    return message, payload.get_msg(3)
+
+
+def test_a_single_pole_rename_carries_only_the_name() -> None:
+    """`homeowner_update { one_p_standard { circuit { name } } }`: nothing else to reset."""
+    target = parse_trait_snapshot(_labelled_circuit_traits())[21].rename_target
+    body = build_rename_request(target, " Hot  tub ", 1, requester_id="user-1", request_id="r")
+
+    message, update = _rename_edit(body)
     metadata = message.get_msg(1)
-    assert (metadata.get_int_opt(1), metadata.get_int_opt(3)) == (1, 16)
-    instance = message.get_msg(2)
-    assert instance.get_msg(1).get_str(1) == "gw-40"
-    assert instance.get_msg(2).get_int_opt(1) == 70
-    command = message.get_msg(14)
-    request = command.get_msg(1)
-    assert request.get_msg(2).get_str(1) == "user-1"
-    payload = parse(command.get_msg(2).get_bytes(1))
-    edit = payload.get_msg(2)
-    assert edit.get_str(1) == "Hot tub"
-    assert payload.get_msg(1) is None  # not the appliance request
+    assert (metadata.get_int_opt(1), metadata.get_int_opt(3)) == (1, 15)
+    assert message.get_msg(2).get_msg(1).get_str(1) == "gw-40"
+    assert message.get_msg(2).get_msg(2).get_int_opt(1) == 21
+    assert message.get_msg(14).get_msg(1).get_msg(2).get_str(1) == "user-1"
+    assert update.get_msg(10).get_msg(1).get_str(1) == "Hot tub"
+    assert update.get_msg(11) is None
+
+
+def test_a_two_pole_rename_names_the_standard_circuit() -> None:
+    """A 240 V breaker's one circuit sits under `two_p_standard { standard }`."""
+    info = parse_trait_snapshot(_labelled_circuit_traits(spaces=(30, 32)))[21]
+    assert info.spaces == (30, 32)
+    body = build_rename_request(info.rename_target, "Dryer", 2, requester_id="user-1")
+
+    _message, update = _rename_edit(body)
+    assert update.get_msg(11).get_msg(3).get_msg(1).get_str(1) == "Dryer"
+    assert update.get_msg(10) is None
+    try:
+        build_rename_request(info.rename_target, "Quad", 3, requester_id="user-1")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a three-space breaker was renamed")
 
 
 def test_names_are_cleaned_and_checked_before_they_leave() -> None:
@@ -924,22 +956,39 @@ class _RecordingGrpc:
     def __exit__(self, *exc: object) -> None:
         """Close nothing."""
 
+    last_name: str | None = None
+
     def send_messages(self, request: bytes) -> bytes:
-        """Record the request and ack it."""
+        """Record the request, remember the name it asks for, and ack it."""
         self.sent.append(request)
+        _message, update = _rename_edit(request)
+        _RecordingGrpc.last_name = update.get_msg(10).get_msg(1).get_str(1)
         return b""
 
 
-def test_the_backend_renames_and_describes_the_panel_again(tmp_path, monkeypatch) -> None:
-    """A rename posts once, and the next schema carries the new name."""
+def _renaming_backend(tmp_path, monkeypatch, *, panel_applies: bool) -> CloudBackend:
+    """Build a backend whose snapshot re-read reports the new name only if the panel took it."""
     backend = CloudBackend(tmp_path / "tokens.json", "device-uuid", user_id="user-1")
     backend._adopt_circuits(parse_trait_snapshot(_labelled_circuit_traits()))
     backend._schema_sent = True
     monkeypatch.setattr(backend, "_access_token", lambda: "token")
     monkeypatch.setattr(backend, "_requester_id", lambda token: "user-1")
-    monkeypatch.setattr(backend, "_request_refresh", lambda delay: None)
+    monkeypatch.setattr(backend_module, "RENAME_CONFIRM_REFRESHES", (0.0, 0.0))
+    monkeypatch.setattr(backend_module, "RENAME_CONFIRM_GRACE_SECONDS", 0.05)
     monkeypatch.setattr(cloud_grpc, "CloudGrpcClient", _RecordingGrpc)
     _RecordingGrpc.sent = []
+
+    def refresh(delay: float) -> None:
+        name = _RecordingGrpc.last_name if panel_applies else "Kitchen"
+        backend._adopt_circuits(parse_trait_snapshot(_labelled_circuit_traits(name)))
+
+    monkeypatch.setattr(backend, "_request_refresh", refresh)
+    return backend
+
+
+def test_the_backend_renames_once_the_panel_reports_the_name(tmp_path, monkeypatch) -> None:
+    """A rename posts once, waits for the panel's own word, and the next schema carries it."""
+    backend = _renaming_backend(tmp_path, monkeypatch, panel_applies=True)
 
     assert backend.rename_circuit("circuit-21", "Pool pump") == "Pool pump"
     assert len(_RecordingGrpc.sent) == 1
@@ -956,6 +1005,21 @@ def test_the_backend_renames_and_describes_the_panel_again(tmp_path, monkeypatch
         pass
     else:
         raise AssertionError("an unknown circuit was renamed")
+
+
+def test_a_rename_the_panel_ignores_is_reported_and_never_shown(tmp_path, monkeypatch) -> None:
+    """SendMessages only acknowledges receipt; the snapshot is what says it worked."""
+    backend = _renaming_backend(tmp_path, monkeypatch, panel_applies=False)
+
+    try:
+        backend.rename_circuit("circuit-21", "Pool pump")
+    except RenameNotApplied:
+        pass
+    else:
+        raise AssertionError("an ignored rename was reported as done")
+    assert backend._circuits[21].label == "Kitchen"
+    assert backend._schema_sent is True  # nothing changed, so nothing reloads
+    assert backend._rename_waits == {}
 
 
 def test_a_rename_made_in_the_span_app_reaches_the_schema(tmp_path) -> None:

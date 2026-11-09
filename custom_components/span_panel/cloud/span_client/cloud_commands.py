@@ -156,21 +156,25 @@ def build_trait_message(
     return field_message(1, metadata) + field_message(2, instance) + field_message(14, command)
 
 
-# CircuitTrait (1/16): the circuit's label — type, voltage, breaker amps and the
-# name the homeowner gave it. Its command message is
+# Renaming a circuit. The homeowner's rename is an update of the *breaker*
+# (CircuitBreakerTrait, 1/15), not of the label trait (1/16): the app's
+# HomeownerEditCircuit { 1: name } is the leaf of
 #
-#     CircuitCommandRequests { 1: update_appliance_request, 2: edit_circuit }
+#     CircuitBreakerCommandRequests { 3: homeowner_update_circuit_breaker_request }
+#     HomeownerUpdateCircuitBreakerRequest
+#       10: one_p_standard { 1: circuit }
+#       11: two_p_standard { 3: standard { 1: circuit } }
 #
-# and the homeowner's edit is `HomeownerEditCircuit { 1: name }`, the only field
 # (recovered from the app bundle; docs/reference/span-cloud-schema.txt in
-# ha-span-ebus). Because the edit names only the name, it cannot touch the
-# type, voltage or amps stored beside it. Which message `edit_circuit` carries
-# is not in the bundle's field literal; HomeownerEditCircuit is the homeowner
-# edit, matching `homeowner_update_circuit_breaker_request` on the breaker. Had
-# the panel wanted the installer's `InstallerSimpleEditCircuit { 1: amps,
-# 2: name }` instead, a string in its varint field 1 is malformed, not misread.
-TRAIT_CIRCUIT_LABEL = 16
-_REQUEST_EDIT_CIRCUIT = 2
+# ha-span-ebus). The edit names only the name, so it cannot touch the type,
+# voltage or amps. A first attempt, `CircuitTrait.edit_circuit` on 1/16, was
+# acknowledged and silently not applied on a MAIN 40 (Nov 2026): SendMessages
+# only acknowledges receipt, so a rename is confirmed by re-reading the name.
+TRAIT_CIRCUIT_BREAKER = 15
+_REQUEST_HOMEOWNER_UPDATE_BREAKER = 3
+_ONE_POLE_STANDARD = 10
+_TWO_POLE_STANDARD = 11
+_TWO_POLE_NEUTRAL_STANDARD = 3
 
 # Longest name we send. The SPAN app's limit is not recovered; this is generous
 # for a breaker label and keeps a pasted paragraph off the panel.
@@ -195,14 +199,29 @@ def clean_circuit_name(name: str) -> str:
     return cleaned
 
 
-def edit_circuit_payload(name: str) -> bytes:
-    """`CircuitCommandRequests { 2: edit_circuit { 1: name } }`."""
-    return field_message(_REQUEST_EDIT_CIRCUIT, field_string(1, clean_circuit_name(name)))
+def rename_payload(name: str, poles: int) -> bytes:
+    """`CircuitBreakerCommandRequests` renaming a standard breaker's one circuit.
+
+    `poles` is how many spaces the breaker takes: 1 or 2. Tandem and quad
+    breakers carry two or three circuits and are not built here.
+    """
+    edit = field_string(1, clean_circuit_name(name))
+    if poles == 1:
+        breaker = field_message(_ONE_POLE_STANDARD, field_message(1, edit))
+    elif poles == 2:
+        breaker = field_message(
+            _TWO_POLE_STANDARD,
+            field_message(_TWO_POLE_NEUTRAL_STANDARD, field_message(1, edit)),
+        )
+    else:
+        raise ValueError(f"cannot rename a breaker taking {poles} spaces")
+    return field_message(_REQUEST_HOMEOWNER_UPDATE_BREAKER, breaker)
 
 
 def build_rename_request(
     target: TraitTarget,
     name: str,
+    poles: int,
     *,
     requester_id: str,
     request_id: str | None = None,
@@ -210,12 +229,12 @@ def build_rename_request(
 ) -> bytes:
     """A ready-to-post `SendMessages` body that renames one circuit.
 
-    `target` is the circuit's label instance (trait 1/16), not its breaker.
+    `target` is the circuit's breaker instance (trait 1/15).
     """
     return build_send_messages(
         build_trait_message(
             target,
-            edit_circuit_payload(name),
+            rename_payload(name, poles),
             requester_id=requester_id,
             request_id=request_id,
             timeout_ms=timeout_ms,

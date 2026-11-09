@@ -219,6 +219,14 @@ LOUD_AFTER_ATTEMPTS = 3
 # (ALWAYS_ON_CIRCUIT, MINIMUM_RECONNECT_TIME) converges back to the truth
 # instead of sitting on our optimistic guess for a full refresh interval.
 POST_COMMAND_REFRESH_SECONDS = 3.0
+# When to re-read the snapshot after a rename, waiting for the new name: soon,
+# then once more for a slow panel. Each wait allows a little extra for the read.
+RENAME_CONFIRM_REFRESHES = (3.0, 8.0)
+RENAME_CONFIRM_GRACE_SECONDS = 5.0
+
+
+class RenameNotApplied(RuntimeError):
+    """SPAN acknowledged a rename, but the panel kept the old name."""
 
 # Accepted command spellings. HA sends CLOSED/OPEN via MQTT discovery, but the
 # integration's switch platform and hand-written automations both reach for
@@ -1323,6 +1331,8 @@ class CloudBackend:
         self._resolved_hardware_ids: list[str] = []
         # instance id -> circuit identity, from the subscribe snapshot.
         self._circuits: dict[int, CircuitInfo] = {}
+        # Renames waiting for the panel to report the new name: instance -> (name, event).
+        self._rename_waits: dict[int, tuple[str, threading.Event]] = {}
         # What `fetch_energy` asks about, learned from the frames: resource ->
         # instance -> node id, and the site flows this panel publishes.
         self._energy_targets: dict[str, dict[int, str]] = {}
@@ -1442,37 +1452,49 @@ class CloudBackend:
         self._request_refresh(POST_COMMAND_REFRESH_SECONDS)
 
     def rename_circuit(self, node_id: str, name: str) -> str:
-        """Rename a circuit on the panel, as the SPAN app's edit screen does.
+        """Rename a circuit on the panel, and wait until the panel reports the new name.
 
-        `node_id` is `circuit-<instance>`. Returns the name as sent (trimmed and
-        single-spaced). Raises `ValueError` for an unknown circuit, one with no
-        label to edit, or a name that fails `clean_circuit_name`; `GrpcError` if
-        SPAN rejects the call.
+        `node_id` is `circuit-<instance>`. Returns the name as stored (trimmed
+        and single-spaced). Raises `ValueError` for an unknown circuit, one with
+        no name to edit, or a name that fails `clean_circuit_name`; `GrpcError`
+        if SPAN rejects the call; `RenameNotApplied` if SPAN took the request
+        but the panel still reports the old name after the confirmation window.
 
-        The new name is adopted at once so the panel's schema is described again
-        with it, and the trait snapshot is re-read shortly after to replace that
-        with what the panel actually stored.
+        `SendMessages` only acknowledges receipt; the real answer goes to the
+        app's Ably trait channel, which we do not read. So the trait snapshot is
+        re-read until it carries the new name. Nothing is shown as renamed
+        before that, so a refused rename never flickers through the UI.
         """
         info = self._circuit_for_node(node_id)
         if info is None:
             raise ValueError(f"no circuit {node_id} on this panel")
-        if info.label_target is None:
+        if info.rename_target is None:
             raise ValueError(f"circuit {node_id} has no name the panel lets us edit")
         cleaned = cloud_commands.clean_circuit_name(name)
         if cleaned == info.label:
             return cleaned
+        poles = len(info.spaces)
 
         access_token = self._access_token()
         request = cloud_commands.build_rename_request(
-            info.label_target, cleaned, requester_id=self._requester_id(access_token)
+            info.rename_target, cleaned, poles, requester_id=self._requester_id(access_token)
         )
-        with cloud_grpc.CloudGrpcClient(access_token, host=self._host) as grpc:
-            grpc.send_messages(request)
-        log.info("rename accepted for %s -> %r", node_id, cleaned)
-
-        self._adopt_circuits({**self._circuits, info.instance_id: replace(info, label=cleaned)})
-        self._request_refresh(POST_COMMAND_REFRESH_SECONDS)
-        return cleaned
+        applied = threading.Event()
+        self._rename_waits[info.instance_id] = (cleaned, applied)
+        try:
+            with cloud_grpc.CloudGrpcClient(access_token, host=self._host) as grpc:
+                grpc.send_messages(request)
+            log.info("rename sent for %s -> %r; waiting for the panel", node_id, cleaned)
+            for delay in RENAME_CONFIRM_REFRESHES:
+                self._request_refresh(delay)
+                if applied.wait(delay + RENAME_CONFIRM_GRACE_SECONDS):
+                    log.info("rename applied for %s -> %r", node_id, cleaned)
+                    return cleaned
+        finally:
+            self._rename_waits.pop(info.instance_id, None)
+        raise RenameNotApplied(
+            f"SPAN took the request, but the panel still calls {node_id} {info.label!r}"
+        )
 
     def _adopt_circuits(self, circuits: dict[int, CircuitInfo]) -> None:
         """Take a fresh view of the circuits, describing the panel again if a name moved.
@@ -1488,6 +1510,9 @@ class CloudBackend:
         self._circuits = circuits
         if renamed:
             self._schema_sent = False
+        for instance, (wanted, applied) in list(self._rename_waits.items()):
+            if instance in circuits and circuits[instance].label == wanted:
+                applied.set()
 
     def fetch_energy(
         self, covered_through_ms: int = 0, *, time_zone: str = "UTC"
