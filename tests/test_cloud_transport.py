@@ -803,3 +803,12 @@ async def test_both_panels_are_shown_at_one_instant(hass: HomeAssistant, monkeyp
         assert clock.now == 2.0
         assert entry_40.runtime_data.coordinator.data.feedthrough_power_w == 302.0
         assert entry_16.runtime_data.coordinator.data.instant_grid_power_w == 40.0  # 1.6 s, at 2.0
+
+
+def test_cloud_energy_is_whole_wh() -> None:
+    """SPAN's kWh becomes whole Wh, with no float residue such as 774.4127999999."""
+    from custom_components.span_panel.cloud.snapshot import _wh
+
+    assert _wh(0.7744128) == 774.0
+    assert _wh(0.7746) == 775.0
+    assert _wh(None) is None

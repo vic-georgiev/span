@@ -165,7 +165,8 @@ def _pcs(readings: Mapping[str, str]) -> SpanPcsSnapshot | None:
 
 
 def _wh(total_kwh: float | None) -> float | None:
-    return None if total_kwh is None else total_kwh * 1000.0
+    """Convert to whole Wh: finer than any meter here measures, and coarser than float noise."""
+    return None if total_kwh is None else float(round(total_kwh * 1000.0))
 
 
 def _nodes(schema: PanelSchema, kind: NodeKind) -> dict[str, list[PropertySpec]]:

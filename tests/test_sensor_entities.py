@@ -355,7 +355,12 @@ def test_panel_metadata_sensors_return_expected_data_sources() -> None:
 
 
 def test_panel_energy_sensor_extra_attributes_include_voltage_and_grace() -> None:
-    """Panel energy sensors should merge grace-period and voltage attributes."""
+    """Panel energy sensors merge voltage, and grace-period attributes while offline.
+
+    Online, the grace attributes are left out: their timestamp moves on every
+    update, and an attribute that changes on every update makes the recorder
+    write a row each time even though the value has not moved.
+    """
     snapshot = SpanPanelSnapshotFactory.create(main_meter_energy_consumed_wh=1250.0)
     coordinator = _make_coordinator(snapshot)
     description = next(
@@ -367,11 +372,20 @@ def test_panel_energy_sensor_extra_attributes_include_voltage_and_grace() -> Non
     sensor._last_valid_state = 1250.0
     sensor._last_valid_changed = datetime.now(tz=UTC) - timedelta(minutes=1)
 
+    coordinator.panel_offline = False
+    online = sensor.extra_state_attributes
+    assert online is not None
+    assert online["voltage"] == 240
+    assert "last_valid_changed" not in online
+    assert "grace_period_remaining" not in online
+
+    coordinator.panel_offline = True
     attrs = sensor.extra_state_attributes
     assert attrs is not None
     assert attrs["voltage"] == 240
     assert attrs["last_valid_state"] == "1250.0"
     assert "grace_period_remaining" in attrs
+    assert attrs["using_grace_period"] == "True"
 
 
 def test_panel_battery_sensor_uses_battery_snapshot() -> None:
@@ -866,6 +880,7 @@ def test_circuit_energy_sensor_extra_attributes_only_include_base_when_circuit_m
 
     sensor._last_valid_state = 12.0
     sensor._last_valid_changed = datetime.now(tz=UTC) - timedelta(minutes=1)
+    coordinator.panel_offline = True  # grace attributes show only while offline
 
     attrs = sensor.extra_state_attributes
     assert attrs is not None
@@ -1077,6 +1092,7 @@ def test_energy_sensor_coerces_invalid_grace_period_value() -> None:
     sensor._last_valid_state = 1250.0
     sensor._last_valid_changed = datetime.now(tz=UTC) - timedelta(minutes=1)
     sensor._grace_period_minutes = "abc"
+    coordinator.panel_offline = True  # grace attributes show only while offline
 
     attrs = sensor.extra_state_attributes
     assert attrs is not None
@@ -1530,6 +1546,7 @@ def test_energy_sensor_negative_grace_period_is_coerced_to_zero() -> None:
     sensor._last_valid_state = 22.0
     sensor._last_valid_changed = datetime.now(tz=UTC) - timedelta(minutes=1)
     sensor._grace_period_minutes = -5
+    coordinator.panel_offline = True  # grace attributes show only while offline
 
     attrs = sensor.extra_state_attributes
 

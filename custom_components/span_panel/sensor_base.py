@@ -928,8 +928,12 @@ class SpanEnergySensorBase[T: SensorEntityDescription, D](SpanSensorBase[T, D], 
         """Return additional state attributes including grace period info."""
         attributes = {}
 
-        # Always show grace period information if we have valid tracking data
-        if self._last_valid_changed is not None:
+        # Grace period information, only while the panel is offline: it is what
+        # the sensor is holding and for how long. While online the tracking time
+        # moves on every update, and an attribute that changes on every update
+        # makes Home Assistant record a new row each time, even with the value
+        # unchanged and the attribute itself kept out of the recorder.
+        if self.coordinator.panel_offline and self._last_valid_changed is not None:
             if self._last_valid_state is not None:
                 attributes["last_valid_state"] = str(self._last_valid_state)
             attributes["last_valid_changed"] = self._last_valid_changed.isoformat()
@@ -944,9 +948,7 @@ class SpanEnergySensorBase[T: SensorEntityDescription, D](SpanSensorBase[T, D], 
                 remaining_minutes = max(0, int(remaining_seconds / 60))
                 attributes["grace_period_remaining"] = str(remaining_minutes)
 
-                # Indicate if we're currently using grace period
-                panel_offline = self.coordinator.panel_offline
-                if panel_offline and remaining_seconds > 0:
+                if remaining_seconds > 0:
                     attributes["using_grace_period"] = "True"
 
         # Energy dip compensation attributes
