@@ -8,7 +8,7 @@ platforms end to end.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 import time
 from typing import Any
 from unittest.mock import patch
@@ -18,6 +18,7 @@ from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
@@ -47,6 +48,11 @@ from custom_components.span_panel.cloud.span_client.cloud_commands import (
     clean_circuit_name,
     powerup_rank_payload,
     shed_policy_payload,
+)
+from custom_components.span_panel.cloud.span_client.cloud_history import (
+    Bucket,
+    Resolution,
+    plan_export_windows,
 )
 from custom_components.span_panel.cloud.span_client.cloud_pb import (
     field_bytes,
@@ -182,6 +188,7 @@ class FakeBackend:
         self.commands: list[tuple[str, str]] = []
         self.renames: list[tuple[str, str]] = []
         self.settings: list[tuple[str, str, object]] = []
+        self.history_calls: list[tuple[int, int, object, str]] = []
         self.on_reading: Callable[[Reading], None] | None = None
         self.started = False
         self.stopped = False
@@ -220,6 +227,28 @@ class FakeBackend:
         """Record the rank and report it back."""
         self.settings.append((node_id, "powerup_rank", rank))
         self._report(f"{node_id}/powerup_rank", str(rank))
+
+    def fetch_history(self, start_ms, end_ms, resolution, *, time_zone="UTC"):
+        """Two hourly buckets for one circuit and the site, starting at the range start."""
+        self.history_calls.append((start_ms, end_ms, resolution, time_zone))
+        hour = 3_600_000
+        return {
+            "circuit-21": {
+                start_ms + i * hour: Bucket(
+                    start_ms + i * hour, start_ms + (i + 1) * hour, {"import": 0.25, "export": 0.0}
+                )
+                for i in range(2)
+            },
+            "site": {
+                start_ms: Bucket(
+                    start_ms, start_ms + hour, {"grid_import": 1.5, "home_import": 1.4}
+                ),
+            },
+        }
+
+    def circuit_labels(self):
+        """Name and spaces of the one circuit the fake history carries."""
+        return {"circuit-21": ("Garage", (9,))}
 
     def _report(self, key: str, value: str) -> None:
         # Stamped now: numeric readings only move forward in time.
@@ -1253,3 +1282,136 @@ def test_configuration_stands_outside_the_aligned_history() -> None:
     assert feed.watermark == 100.0
     assert "circuit-21/powerup_rank" not in feed.history
     assert feed.readings_at(100.0)["circuit-21/powerup_rank"] == "2"
+
+
+def test_an_export_range_is_walked_in_chunks_the_server_accepts() -> None:
+    """Aligned, consecutive chunks; a short tail reaches back to the server's minimum."""
+    hour = 3_600_000
+    day = 24 * hour
+    start = 1_762_000_000_000  # not on an hour boundary
+    windows = plan_export_windows(
+        start_ms=start, end_ms=start + 40 * day, resolution=Resolution.HOURLY
+    )
+    assert windows[0][0] == start - start % hour
+    assert len(windows) == 2
+    assert windows[1][0] == windows[0][1]  # consecutive, no gap
+    assert windows[-1][1] == start + 40 * day
+
+    short = plan_export_windows(start_ms=0, end_ms=hour, resolution=Resolution.HOURLY)
+    assert short == [(-hour, hour)]  # the two-hour minimum, reaching back
+    assert plan_export_windows(start_ms=5, end_ms=5, resolution=Resolution.DAILY) == []
+
+
+def test_the_history_csv_keeps_same_named_circuits_and_the_dst_hour_apart() -> None:
+    """Spaces in the header, offsets in local time, empty where SPAN returned nothing."""
+    from zoneinfo import ZoneInfo
+
+    from custom_components.span_panel.history_export import build_csv
+
+    hour = 3_600_000
+    first = int(datetime(2026, 11, 1, 8, tzinfo=UTC).timestamp() * 1000)  # 01:00 PDT
+    second = first + hour  # 01:00 PST, the same wall-clock hour
+    history = {
+        "circuit-21": {
+            first: Bucket(first, first + hour, {"import": 0.1, "export": 0.0}),
+            second: Bucket(second, second + hour, {"import": 0.2, "export": 0.0}),
+        },
+        "circuit-22": {first: Bucket(first, first + hour, {"import": 0.3, "export": 0.05})},
+        "site": {first: Bucket(first, first + hour, {"grid_import": 0.4, "battery_import": 0.0})},
+    }
+    labels = {
+        "circuit-21": ("Bedroom / Outlets", (11,)),
+        "circuit-22": ("Bedroom / Outlets", (13,)),
+    }
+    text, rows, totals = build_csv(history, labels, ZoneInfo("America/Los_Angeles"))
+    lines = text.splitlines()
+
+    assert rows == 2
+    assert lines[0].split(",") == [
+        "Start (UTC)",
+        "Start (local)",
+        "End (UTC)",
+        "Bedroom / Outlets [11] (kWh)",
+        "Bedroom / Outlets [13] (kWh)",
+        "Bedroom / Outlets [13] export (kWh)",
+        "Grid import (kWh)",
+        "Battery import (kWh)",
+    ]
+    assert lines[1].split(",")[1] == "2026-11-01T01:00:00-07:00"
+    assert lines[2].split(",")[1] == "2026-11-01T01:00:00-08:00"
+    assert lines[2].split(",")[4] == ""  # circuit 22 had no bucket that hour
+    assert round(totals["Bedroom / Outlets [11] (kWh)"], 6) == 0.3
+
+
+async def test_history_exports_to_a_file_and_a_download_link(
+    hass: HomeAssistant, hass_ws_client, tmp_path
+) -> None:
+    """The action writes one CSV per cloud panel; the websocket command adds a signed link."""
+    FakeStream.backends = {}
+    hass.config.config_dir = str(tmp_path)
+    entry_40 = _entry(SERIAL_40, "MAIN 40")
+    entry_16 = _entry(SERIAL_16, "MAIN 16")
+    entry_40.add_to_hass(hass)
+    entry_16.add_to_hass(hass)
+
+    with (
+        patch.object(hub_module, "discover", return_value=[SITE]),
+        patch.object(hub_module, "SiteStream", FakeStream),
+        patch.object(hub_module, "write_tokens_if_missing"),
+    ):
+        assert await hass.config_entries.async_setup(entry_40.entry_id)
+        await hass.async_block_till_done()
+
+        response = await hass.services.async_call(
+            DOMAIN,
+            "export_history",
+            {
+                "start": "2026-11-01 00:00:00",
+                "end": "2026-11-02 00:00:00",
+                "config_entry_id": entry_16.entry_id,
+            },
+            blocking=True,
+            return_response=True,
+        )
+        (export,) = response["exports"]
+        assert export["panel"] == SERIAL_16
+        assert export["rows"] == 2
+        assert export["totals_kwh"]["Garage [9] (kWh)"] == 0.5
+        written = (tmp_path / "span_history" / export["file"]).read_text().splitlines()
+        assert written[0].startswith("Start (UTC),Start (local),End (UTC),Garage [9] (kWh)")
+        ((start_ms, end_ms, resolution, time_zone),) = FakeStream.backends[SERIAL_16].history_calls
+        assert resolution is Resolution.HOURLY
+        assert end_ms - start_ms == 25 * 3_600_000  # the day the clocks went back
+        assert FakeStream.backends[SERIAL_40].history_calls == []
+
+        try:
+            await hass.services.async_call(
+                DOMAIN,
+                "export_history",
+                {"start": "2026-11-02 00:00:00", "end": "2026-11-01 00:00:00"},
+                blocking=True,
+                return_response=True,
+            )
+        except ServiceValidationError as err:
+            assert err.translation_key == "history_bad_range"
+        else:
+            raise AssertionError("a backwards range was exported")
+
+        client = await hass_ws_client(hass)
+        await client.send_json(
+            {
+                "id": 1,
+                "type": "span_panel/export_history",
+                "start": "2026-11-01T00:00:00-07:00",
+                "end": "2026-11-01T06:00:00-07:00",
+                "resolution": "quarter_hour",
+            }
+        )
+        reply = await client.receive_json()
+        assert reply["success"], reply
+        exports = reply["result"]["exports"]
+        assert {e["panel"] for e in exports} == {SERIAL_40, SERIAL_16}
+        assert all(
+            e["url"].startswith("/api/span_panel/history/") and "authSig=" in e["url"]
+            for e in exports
+        )

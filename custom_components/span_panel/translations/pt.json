@@ -579,6 +579,18 @@
     },
     "unvalidated_hardware_no_model": {
       "message": "A versão de hardware {version} com um modelo desconhecido não foi validada com esta versão da integração."
+    },
+    "history_no_cloud_panels": {
+      "message": "Nenhum painel SPAN ligado pela nuvem da SPAN está carregado. A exportação do histórico requer a ligação à nuvem."
+    },
+    "history_bad_range": {
+      "message": "O fim do intervalo tem de ser posterior ao início."
+    },
+    "history_range_too_long": {
+      "message": "Na resolução {resolution}, uma exportação abrange no máximo {days} dias. Escolha um intervalo mais curto ou uma resolução maior."
+    },
+    "history_fetch_failed": {
+      "message": "Não foi possível ler o histórico da SPAN de {panel}: {reason}"
     }
   },
   "options": {
@@ -644,6 +656,15 @@
       "options": {
         "circuit_numbers": "Números de Circuito (ex., span_panel_circuit_15_power)",
         "friendly_names": "Nomes Amigáveis (ex., span_panel_cozinha_tomadas_power)"
+      }
+    },
+    "history_resolution": {
+      "options": {
+        "minute": "Minuto",
+        "quarter_hour": "Quarto de hora",
+        "hour": "Hora",
+        "day": "Dia",
+        "month": "Mês"
       }
     }
   },
@@ -933,6 +954,28 @@
         "config_entry_id": {
           "name": "Entrada de configuração",
           "description": "Que painel rodar. Opcional com um único painel; obrigatório quando está carregado mais do que um SPAN Panel."
+        }
+      }
+    },
+    "export_history": {
+      "name": "Exportar histórico de energia",
+      "description": "Lê da nuvem da SPAN a energia medida num intervalo de datas e escreve um CSV por painel na pasta span_history do seu diretório de configuração.",
+      "fields": {
+        "start": {
+          "name": "Início",
+          "description": "Início do intervalo, na sua hora local salvo indicação de fuso horário."
+        },
+        "end": {
+          "name": "Fim",
+          "description": "Fim do intervalo. Deixe vazio para agora."
+        },
+        "resolution": {
+          "name": "Resolução",
+          "description": "Tamanho de cada linha: minuto, quarto de hora, hora, dia ou mês."
+        },
+        "config_entry_id": {
+          "name": "Painel",
+          "description": "Apenas este painel. Deixe vazio para todos os painéis ligados pela nuvem da SPAN."
         }
       }
     }

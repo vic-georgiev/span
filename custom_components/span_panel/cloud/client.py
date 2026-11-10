@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
+from functools import partial
 import logging
 import time
 from typing import Any
@@ -44,6 +45,7 @@ from .snapshot import (
     power_reading_key,
 )
 from .span_client.backend import RELAY_PROPERTY
+from .span_client.cloud_history import Bucket, Resolution
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -321,6 +323,24 @@ class SpanCloudClient:
         return await self._hass.async_add_executor_job(
             self._feed.backend.rename_circuit, node_for_circuit(circuit_id), name
         )
+
+    @property
+    def serial(self) -> str:
+        """The panel's serial number."""
+        return self._identity.serial
+
+    async def fetch_history(
+        self, start_ms: int, end_ms: int, resolution: Resolution, time_zone: str
+    ) -> tuple[dict[str, dict[int, Bucket]], dict[str, tuple[str, tuple[int, ...]]]]:
+        """SPAN's metered energy over a range, and the names and spaces of the circuits.
+
+        Raises whatever the call raises; the caller reports it.
+        """
+        backend = self._feed.backend
+        history = await self._hass.async_add_executor_job(
+            partial(backend.fetch_history, start_ms, end_ms, resolution, time_zone=time_zone)
+        )
+        return history, backend.circuit_labels()
 
     async def set_circuit_priority(self, circuit_id: str, priority: str) -> PublishOutcome:
         """Set the circuit's backup priority (`NEVER`, `SOC_THRESHOLD`, `OFF_GRID`)."""

@@ -255,6 +255,44 @@ def plan_windows(*, now_ms: int, covered_through_ms: int = 0) -> list[tuple[Reso
     return plans
 
 
+# --- export: any range, in chunks ------------------------------------------------
+
+# How much one export request asks for, per resolution. The server's minimum
+# window is known (MIN_WINDOW_SECONDS); its maximum is not, so each chunk is
+# kept to roughly a month of buckets or less.
+EXPORT_CHUNK_SECONDS: dict[Resolution, int] = {
+    Resolution.MINUTELY: 86_400,
+    Resolution.QUARTER_HOURLY: 7 * 86_400,
+    Resolution.HOURLY: 31 * 86_400,
+    Resolution.DAILY: 366 * 86_400,
+    Resolution.MONTHLY: 10 * 366 * 86_400,
+}
+
+
+def plan_export_windows(
+    *, start_ms: int, end_ms: int, resolution: Resolution
+) -> list[tuple[int, int]]:
+    """Consecutive `[start, end)` windows covering the range, oldest first.
+
+    Starts are aligned to the bucket size where that is arithmetic (see
+    `align_start`). A window shorter than the server's minimum, at the end of a
+    range or for a range that short, reaches back to the minimum instead; the
+    overlap repeats buckets, which the caller drops by their start time.
+    """
+    if end_ms <= start_ms:
+        return []
+    start_ms = align_start(start_ms, resolution)
+    chunk = EXPORT_CHUNK_SECONDS[resolution] * 1000
+    minimum = MIN_WINDOW_SECONDS[resolution] * 1000
+    windows: list[tuple[int, int]] = []
+    at = start_ms
+    while at < end_ms:
+        stop = min(at + chunk, end_ms)
+        windows.append((min(at, stop - minimum), stop))
+        at = stop
+    return windows
+
+
 def build_request(
     instances: Mapping[str, Iterable[int]],
     *,

@@ -290,3 +290,28 @@ rotate_credentials:
       selector:
         config_entry:
           integration: span_panel
+
+export_history:
+  fields:
+    start:
+      required: true
+      selector:
+        datetime:
+    end:
+      selector:
+        datetime:
+    resolution:
+      default: hour
+      selector:
+        select:
+          translation_key: history_resolution
+          options:
+            - minute
+            - quarter_hour
+            - hour
+            - day
+            - month
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: span_panel

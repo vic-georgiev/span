@@ -579,6 +579,18 @@
     },
     "unvalidated_hardware_no_model": {
       "message": "不明なモデルのハードウェアバージョン {version} は、このリリースで検証されていません。"
+    },
+    "history_no_cloud_panels": {
+      "message": "SPAN のクラウドで接続された SPAN パネルが読み込まれていません。履歴のエクスポートにはクラウド接続が必要です。"
+    },
+    "history_bad_range": {
+      "message": "期間の終了は開始より後でなければなりません。"
+    },
+    "history_range_too_long": {
+      "message": "{resolution} の解像度では、1 回のエクスポートは最大 {days} 日です。期間を短くするか、解像度を粗くしてください。"
+    },
+    "history_fetch_failed": {
+      "message": "{panel} の SPAN 履歴を読み取れませんでした: {reason}"
     }
   },
   "options": {
@@ -644,6 +656,15 @@
       "options": {
         "circuit_numbers": "回路番号（例：span_panel_circuit_15_power）",
         "friendly_names": "フレンドリ名（例：span_panel_kitchen_outlets_power）"
+      }
+    },
+    "history_resolution": {
+      "options": {
+        "minute": "分",
+        "quarter_hour": "15 分",
+        "hour": "時間",
+        "day": "日",
+        "month": "月"
       }
     }
   },
@@ -933,6 +954,28 @@
         "config_entry_id": {
           "name": "設定エントリ",
           "description": "ローテーションするパネル。パネルが 1 台の場合は任意ですが、複数の SPAN Panel が読み込まれている場合は必須です。"
+        }
+      }
+    },
+    "export_history": {
+      "name": "エネルギー履歴をエクスポート",
+      "description": "SPAN のクラウドから期間内の計測エネルギーを読み取り、パネルごとに CSV を設定ディレクトリの span_history フォルダーに書き出します。",
+      "fields": {
+        "start": {
+          "name": "開始",
+          "description": "期間の開始。タイムゾーンの指定がなければローカル時刻です。"
+        },
+        "end": {
+          "name": "終了",
+          "description": "期間の終了。空欄なら現在時刻です。"
+        },
+        "resolution": {
+          "name": "解像度",
+          "description": "各行の長さ：分、15 分、時間、日、月。"
+        },
+        "config_entry_id": {
+          "name": "パネル",
+          "description": "このパネルのみ。空欄なら SPAN のクラウドで接続されたすべてのパネルです。"
         }
       }
     }

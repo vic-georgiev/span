@@ -579,6 +579,18 @@
     },
     "unvalidated_hardware_no_model": {
       "message": "La version matérielle {version} avec un modèle inconnu n'a pas été validée avec cette version de l'intégration."
+    },
+    "history_no_cloud_panels": {
+      "message": "Aucun panneau SPAN connecté par le cloud de SPAN n'est chargé. L'export de l'historique nécessite la connexion cloud."
+    },
+    "history_bad_range": {
+      "message": "La fin de la période doit être postérieure à son début."
+    },
+    "history_range_too_long": {
+      "message": "En résolution {resolution}, un export couvre au plus {days} jours. Choisissez une période plus courte ou une résolution plus large."
+    },
+    "history_fetch_failed": {
+      "message": "L'historique SPAN de {panel} n'a pas pu être lu : {reason}"
     }
   },
   "options": {
@@ -644,6 +656,15 @@
       "options": {
         "circuit_numbers": "Numéros de Circuit (ex., span_panel_circuit_15_power)",
         "friendly_names": "Noms Conviviaux (ex., span_panel_cuisine_prises_power)"
+      }
+    },
+    "history_resolution": {
+      "options": {
+        "minute": "Minute",
+        "quarter_hour": "Quart d'heure",
+        "hour": "Heure",
+        "day": "Jour",
+        "month": "Mois"
       }
     }
   },
@@ -933,6 +954,28 @@
         "config_entry_id": {
           "name": "Entrée de configuration",
           "description": "Le panneau à faire tourner. Facultatif avec un seul panneau ; obligatoire lorsque plusieurs SPAN Panel sont chargés."
+        }
+      }
+    },
+    "export_history": {
+      "name": "Exporter l'historique d'énergie",
+      "description": "Lit dans le cloud de SPAN l'énergie mesurée sur une période et écrit un CSV par panneau dans le dossier span_history de votre répertoire de configuration.",
+      "fields": {
+        "start": {
+          "name": "Début",
+          "description": "Début de la période, en heure locale sauf si un fuseau horaire est indiqué."
+        },
+        "end": {
+          "name": "Fin",
+          "description": "Fin de la période. Laissez vide pour maintenant."
+        },
+        "resolution": {
+          "name": "Résolution",
+          "description": "Taille de chaque ligne : minute, quart d'heure, heure, jour ou mois."
+        },
+        "config_entry_id": {
+          "name": "Panneau",
+          "description": "Seulement ce panneau. Laissez vide pour tous les panneaux connectés par le cloud de SPAN."
         }
       }
     }

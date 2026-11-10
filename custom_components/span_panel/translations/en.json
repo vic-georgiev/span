@@ -579,6 +579,18 @@
     },
     "unvalidated_hardware_no_model": {
       "message": "Hardware version {version} with an unknown model has not been validated with this release."
+    },
+    "history_no_cloud_panels": {
+      "message": "No SPAN panel connected through SPAN's cloud is loaded. History export needs the cloud connection."
+    },
+    "history_bad_range": {
+      "message": "The end of the range must come after its start."
+    },
+    "history_range_too_long": {
+      "message": "At {resolution} resolution one export covers at most {days} days. Choose a shorter range or a coarser resolution."
+    },
+    "history_fetch_failed": {
+      "message": "SPAN's history for {panel} could not be read: {reason}"
     }
   },
   "options": {
@@ -644,6 +656,15 @@
       "options": {
         "circuit_numbers": "Circuit Numbers (e.g., span_panel_circuit_15_power)",
         "friendly_names": "Friendly Names (e.g., span_panel_kitchen_outlets_power)"
+      }
+    },
+    "history_resolution": {
+      "options": {
+        "minute": "Minute",
+        "quarter_hour": "Quarter hour",
+        "hour": "Hour",
+        "day": "Day",
+        "month": "Month"
       }
     }
   },
@@ -933,6 +954,28 @@
         "config_entry_id": {
           "name": "Config entry",
           "description": "Optional config entry id. Only needed when more than one SPAN panel is configured."
+        }
+      }
+    },
+    "export_history": {
+      "name": "Export energy history",
+      "description": "Reads SPAN's metered energy for a date range from SPAN's cloud and writes one CSV per panel to the span_history folder in your configuration directory.",
+      "fields": {
+        "start": {
+          "name": "Start",
+          "description": "Beginning of the range, in your local time unless a time zone is given."
+        },
+        "end": {
+          "name": "End",
+          "description": "End of the range. Leave empty for now."
+        },
+        "resolution": {
+          "name": "Resolution",
+          "description": "Size of each row: a minute, a quarter hour, an hour, a day or a month."
+        },
+        "config_entry_id": {
+          "name": "Panel",
+          "description": "Only this panel. Leave empty for every panel connected through SPAN's cloud."
         }
       }
     }

@@ -579,6 +579,18 @@
     },
     "unvalidated_hardware_no_model": {
       "message": "La versión de hardware {version} con un modelo desconocido no ha sido validada con esta versión de la integración."
+    },
+    "history_no_cloud_panels": {
+      "message": "No hay ningún panel SPAN conectado mediante la nube de SPAN. Exportar el historial requiere la conexión en la nube."
+    },
+    "history_bad_range": {
+      "message": "El fin del intervalo debe ser posterior a su inicio."
+    },
+    "history_range_too_long": {
+      "message": "Con resolución {resolution}, una exportación abarca como máximo {days} días. Elige un intervalo más corto o una resolución mayor."
+    },
+    "history_fetch_failed": {
+      "message": "No se pudo leer el historial de SPAN de {panel}: {reason}"
     }
   },
   "options": {
@@ -644,6 +656,15 @@
       "options": {
         "circuit_numbers": "Números de Circuito (ej., span_panel_circuit_15_power)",
         "friendly_names": "Nombres Amigables (ej., span_panel_cocina_tomacorrientes_power)"
+      }
+    },
+    "history_resolution": {
+      "options": {
+        "minute": "Minuto",
+        "quarter_hour": "Cuarto de hora",
+        "hour": "Hora",
+        "day": "Día",
+        "month": "Mes"
       }
     }
   },
@@ -933,6 +954,28 @@
         "config_entry_id": {
           "name": "Entrada de configuración",
           "description": "Qué panel rotar. Opcional con un solo panel; obligatorio cuando hay más de un SPAN Panel cargado."
+        }
+      }
+    },
+    "export_history": {
+      "name": "Exportar historial de energía",
+      "description": "Lee del servicio en la nube de SPAN la energía medida en un intervalo de fechas y escribe un CSV por panel en la carpeta span_history de tu directorio de configuración.",
+      "fields": {
+        "start": {
+          "name": "Inicio",
+          "description": "Comienzo del intervalo, en tu hora local salvo que se indique una zona horaria."
+        },
+        "end": {
+          "name": "Fin",
+          "description": "Fin del intervalo. Déjalo vacío para usar ahora."
+        },
+        "resolution": {
+          "name": "Resolución",
+          "description": "Tamaño de cada fila: minuto, cuarto de hora, hora, día o mes."
+        },
+        "config_entry_id": {
+          "name": "Panel",
+          "description": "Solo este panel. Déjalo vacío para todos los paneles conectados mediante la nube de SPAN."
         }
       }
     }

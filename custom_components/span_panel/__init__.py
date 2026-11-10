@@ -111,6 +111,7 @@ from .hardware_repairs import (
     async_clear_unvalidated_hardware,
     async_raise_unvalidated_hardware,
 )
+from .history_export import async_register_history_export
 from .leaf_repairs import async_clear_leaf_name_mismatch, async_raise_leaf_name_mismatch
 from .migrations import CURRENT_CONFIG_VERSION, async_migrate_entry  # noqa: F401
 from .notices import async_forget, async_restore
@@ -198,6 +199,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     _async_register_graph_horizon_services(hass)
     _async_register_favorites_services(hass)
     _async_register_credential_services(hass)
+    async_register_history_export(hass)
 
     await async_apply_panel_registration(hass)
 

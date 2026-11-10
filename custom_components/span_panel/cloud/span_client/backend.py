@@ -1669,6 +1669,57 @@ class CloudBackend:
                 samples.extend(energy_samples(series, targets, self._energy_flows))
         return samples
 
+    def fetch_history(
+        self,
+        start_ms: int,
+        end_ms: int,
+        resolution: cloud_history.Resolution,
+        *,
+        time_zone: str = "UTC",
+    ) -> dict[str, dict[int, cloud_history.Bucket]]:
+        """Read SPAN's metered energy over any range, every component kept.
+
+        Blocking, one gRPC call per chunk (`cloud_history.plan_export_windows`).
+        Returns `{node_id: {bucket start ms: bucket}}` for the panel's circuits
+        (`circuit-<instance>`, components `import`/`export`) and its site
+        (`site`, the eleven directional flows), each bucket once even where
+        chunks overlap. Empty until a frame has named the metric instances.
+        """
+        targets = self._energy_targets
+        if not targets:
+            return {}
+        instances = {resource: list(nodes) for resource, nodes in targets.items()}
+        out: dict[str, dict[int, cloud_history.Bucket]] = {}
+        with cloud_grpc.CloudGrpcClient(self._access_token(), host=self._host) as grpc:
+            for chunk_start, chunk_end in cloud_history.plan_export_windows(
+                start_ms=start_ms, end_ms=end_ms, resolution=resolution
+            ):
+                request = cloud_history.build_request(
+                    instances,
+                    start_ms=chunk_start,
+                    end_ms=chunk_end,
+                    resolution=resolution,
+                    time_zone=time_zone,
+                )
+                for series in cloud_history.parse_response(
+                    grpc.call(cloud_history.METHOD, request)
+                ):
+                    node_id = targets.get(series.resource_id, {}).get(series.instance_id)
+                    if node_id is None:
+                        continue
+                    buckets = out.setdefault(node_id, {})
+                    for bucket in series.buckets:
+                        if start_ms <= bucket.start_ms < end_ms:
+                            buckets[bucket.start_ms] = bucket
+        return out
+
+    def circuit_labels(self) -> dict[str, tuple[str, tuple[int, ...]]]:
+        """`{circuit-<instance>: (name, spaces)}` for every circuit the panel describes."""
+        return {
+            _circuit_node(instance): (info.display_name, tuple(info.spaces))
+            for instance, info in self._circuits.items()
+        }
+
     def _requester_id(self, access_token: str) -> str:
         """Who a write says it is: this user's SPAN id.
 
