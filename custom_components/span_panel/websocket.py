@@ -352,6 +352,8 @@ async def handle_panel_topology(
             "first_space": first_space_for(config_entry.data.get(CONF_CLOUD_MODEL)),
             # Whether `span_panel/rename_circuit` can write names on this panel.
             "can_rename": hasattr(coordinator.client, "rename_circuit"),
+            # Whether `span_panel/export_history` can read this panel's history.
+            "can_export_history": hasattr(coordinator.client, "fetch_history"),
             "device_id": msg["device_id"],
             # The panel's current device and the entry that owns it. They differ
             # from what the request carried only when that was an id saved before

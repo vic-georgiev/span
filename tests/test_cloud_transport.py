@@ -824,6 +824,7 @@ async def test_the_house_puts_the_16_under_the_40s_lugs(
         topology = await client.receive_json()
         assert topology["result"]["first_space"] == 9  # below 9 is the main-breaker module
         assert topology["result"]["can_rename"] is True  # the cloud writes names
+        assert topology["result"]["can_export_history"] is True
 
         await client.send_json(
             {

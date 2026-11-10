@@ -1,4 +1,5 @@
 {
+  "can_export_history": false,
   "can_rename": false,
   "circuits": {
     "266eb903e50116147fb212879e812cd7": {
