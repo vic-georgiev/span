@@ -13,8 +13,6 @@ from span_panel_api import SpanCircuitSnapshot, SpanPanelSnapshot
 
 from .adoption import AdoptedSelect, create_adopted_selects
 from .const import (
-    API_VERSION_CLOUD,
-    CONF_API_VERSION,
     DOMAIN,
     USE_CIRCUIT_NUMBERS,
     CircuitPriority,
@@ -375,11 +373,9 @@ async def async_setup_entry(
     # Get device name from config entry data
     device_name = config_entry.data.get("device_name", config_entry.title)
 
-    # Over SPAN's cloud the priority can be read but not yet written, so a
-    # select would only ever fail; the priority is on the circuit's attributes.
+    # Over SPAN's cloud too: the backup priority is written on the circuit's
+    # load-management entry, and counts once the panel's snapshot reports it.
     qualifies: Callable[[SpanCircuitSnapshot], bool] = circuit_has_a_priority_select
-    if config_entry.data.get(CONF_API_VERSION) == API_VERSION_CLOUD:
-        qualifies = _never
 
     remove_withdrawn_controls(
         er.async_get(hass),

@@ -36,6 +36,7 @@ from custom_components.span_panel.const import DOMAIN
 from .energy import EnergyLedger
 from .span_client import cloud_auth
 from .span_client.backend import (
+    CONFIG_PROPERTIES,
     CloudBackend,
     PanelInfo,
     SiteInfo,
@@ -125,7 +126,15 @@ class PanelFeed:
 
     @callback
     def record(self, reading: Reading) -> None:
-        """Keep a numeric reading in its short history, in frame-time order."""
+        """Keep a numeric reading in its short history, in frame-time order.
+
+        Configuration is left out: it is stamped when the trait snapshot was
+        read, on the wall clock, so aligning it would hold a changed setting
+        back until the house clock caught up, and its stamp would push the
+        panel's watermark ahead of SPAN's frame time.
+        """
+        if reading.key.rsplit("/", 1)[-1] in CONFIG_PROPERTIES:
+            return
         try:
             value = float(reading.value)
         except (TypeError, ValueError):

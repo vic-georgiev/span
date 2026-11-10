@@ -244,6 +244,69 @@ def build_rename_request(
     )
 
 
+# Load management (SwitchLoadManagementTrait, 1/31), the homeowner's settings
+# in the app's Battery priority, PowerUp and Always on screens:
+#
+#     SwitchLoadManagementCommandRequests
+#       4: set_preferred_disconnect_rank_request { 1: preferred_disconnect_rank }
+#       5: set_backup_config_request             { 1: backup_config { 1: priority } }
+#       6: set_shed_policy_request               { 1: shed_policy }
+#
+# (docs/reference/span-cloud-schema.txt in ha-span-ebus). The backup_config's
+# type is not in the bundle's field literal; SwitchLoadManagementConfig.Backup
+# { 1: priority } is what the snapshot carries at config #2, so the same shape
+# is sent. Values, as the snapshot reads them: priority 4 stays on in an outage,
+# 3 stays on until the battery threshold, 2 turns off; shed policy 1 is always
+# on, 2 is SPAN's to manage.
+TRAIT_SWITCH_LOAD_MANAGEMENT = 31
+_REQUEST_SET_PREFERRED_RANK = 4
+_REQUEST_SET_BACKUP_CONFIG = 5
+_REQUEST_SET_SHED_POLICY = 6
+
+BACKUP_PRIORITY_VALUES = (2, 3, 4)
+SHED_POLICY_ALWAYS_ON = 1
+SHED_POLICY_MANAGED = 2
+MAX_POWERUP_RANK = 999
+
+
+def backup_priority_payload(priority: int) -> bytes:
+    """`set_backup_config_request { backup_config { priority } }`."""
+    if priority not in BACKUP_PRIORITY_VALUES:
+        raise ValueError(f"backup priority must be one of {BACKUP_PRIORITY_VALUES}")
+    return field_message(
+        _REQUEST_SET_BACKUP_CONFIG, field_message(1, field_varint(1, priority))
+    )
+
+
+def shed_policy_payload(always_on: bool) -> bytes:
+    """`set_shed_policy_request { shed_policy }`: always on, or SPAN's to manage."""
+    policy = SHED_POLICY_ALWAYS_ON if always_on else SHED_POLICY_MANAGED
+    return field_message(_REQUEST_SET_SHED_POLICY, field_varint(1, policy))
+
+
+def powerup_rank_payload(rank: int) -> bytes:
+    """`set_preferred_disconnect_rank_request { rank }`, ranks starting at 1."""
+    if not 1 <= rank <= MAX_POWERUP_RANK:
+        raise ValueError(f"a PowerUp rank is 1 to {MAX_POWERUP_RANK}")
+    return field_message(_REQUEST_SET_PREFERRED_RANK, field_varint(1, rank))
+
+
+def build_load_management_request(
+    target: TraitTarget,
+    payload: bytes,
+    *,
+    requester_id: str,
+    request_id: str | None = None,
+    timeout_ms: int = DEFAULT_TIMEOUT_MS,
+) -> bytes:
+    """A ready-to-post `SendMessages` body for one 1/31 setting."""
+    return build_send_messages(
+        build_trait_message(
+            target, payload, requester_id=requester_id, request_id=request_id, timeout_ms=timeout_ms
+        )
+    )
+
+
 def build_send_messages(*messages: bytes) -> bytes:
     """`SendMessagesRequest { 1: msgs[] }` — the envelope the RPC takes."""
     return b"".join(field_message(1, msg) for msg in messages)

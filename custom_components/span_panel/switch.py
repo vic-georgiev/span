@@ -17,7 +17,13 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from span_panel_api import SpanCircuitSnapshot, SpanPanelSnapshot
 
 from .adoption import AdoptedSwitch, create_adopted_switches
-from .const import DOMAIN, USE_CIRCUIT_NUMBERS, CircuitRelayState
+from .const import (
+    API_VERSION_CLOUD,
+    CONF_API_VERSION,
+    DOMAIN,
+    USE_CIRCUIT_NUMBERS,
+    CircuitRelayState,
+)
 from .control_gate import (
     ControlLock,
     ControlLockExtraStoredData,
@@ -35,6 +41,7 @@ from .helpers import (
     construct_voltage_attribute,
     remove_withdrawn_controls,
 )
+from .load_settings import SpanAlwaysOnSwitch, always_on_switches
 from .naming import (
     circuit_object_id_base,
     release_registry_name_written_by_older_release,
@@ -542,7 +549,9 @@ async def async_setup_entry(
     # Get device name from config entry data
     _device_name = config_entry.data.get("device_name", config_entry.title)
 
-    entities: list[SpanPanelCircuitsSwitch | AdoptedSwitch | SpanPanelControlLockSwitch] = []
+    entities: list[
+        SpanPanelCircuitsSwitch | AdoptedSwitch | SpanPanelControlLockSwitch | SpanAlwaysOnSwitch
+    ] = []
 
     if policy.lock_enabled:
         entities.append(
@@ -580,6 +589,10 @@ async def async_setup_entry(
         if not circuit_has_a_breaker_switch(circuit_data):
             continue
         entities.append(SpanPanelCircuitsSwitch(coordinator, circuit_id, _device_name))
+
+    # Always on, which only SPAN's cloud can write today.
+    if config_entry.data.get(CONF_API_VERSION) == API_VERSION_CLOUD:
+        entities.extend(always_on_switches(coordinator, snapshot))
 
     # Settable properties on devices this integration models nothing for.
     # Disabled and diagnostic like every adopted entity: the panel authorises the

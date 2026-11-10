@@ -463,6 +463,12 @@
     "circuit_priority_not_delivered": {
       "message": "A alteração de prioridade para {circuit} não pôde ser entregue ao painel: {reason}. Foi recusada em vez de enfileirada, portanto a prioridade permanece inalterada."
     },
+    "circuit_setting_failed": {
+      "message": "A alteração de {setting} para {circuit} foi recusada: {reason}. A definição não mudou."
+    },
+    "circuit_setting_not_delivered": {
+      "message": "A alteração de {setting} para {circuit} não teve efeito: {reason}. O painel continua a indicar a definição anterior."
+    },
     "circuit_relay_failed": {
       "message": "O comando do disjuntor para {circuit} foi recusado: {reason}. Nada foi enviado ao painel, portanto o disjuntor não mudou de posição."
     },

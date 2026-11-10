@@ -463,6 +463,12 @@
     "circuit_priority_not_delivered": {
       "message": "{circuit}の優先度変更をパネルに送信できませんでした: {reason}。キューに入れずに拒否したため、優先度は変わっていません。"
     },
+    "circuit_setting_failed": {
+      "message": "{circuit} の {setting} の変更は拒否されました: {reason}。設定は変更されていません。"
+    },
+    "circuit_setting_not_delivered": {
+      "message": "{circuit} の {setting} の変更は反映されませんでした: {reason}。パネルは以前の設定のままです。"
+    },
     "circuit_relay_failed": {
       "message": "{circuit}のブレーカー操作は拒否されました: {reason}。パネルには何も送信されていないため、ブレーカーの状態は変わっていません。"
     },

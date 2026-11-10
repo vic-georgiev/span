@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from datetime import timedelta
 import logging
 import time
+from typing import Any
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
@@ -45,6 +46,9 @@ from .snapshot import (
 from .span_client.backend import RELAY_PROPERTY
 
 _LOGGER = logging.getLogger(__name__)
+
+# The integration's priority names to the values SPAN's snapshot carries (1/31 config #2.1).
+_BACKUP_PRIORITY_BY_NAME = {"NEVER": 4, "SOC_THRESHOLD": 3, "OFF_GRID": 2}
 
 # Over Ethernet the stream pushes a frame or two a second; over the panel's
 # cellular backup, about one a minute. Two minutes of silence is past both.
@@ -319,8 +323,68 @@ class SpanCloudClient:
         )
 
     async def set_circuit_priority(self, circuit_id: str, priority: str) -> PublishOutcome:
-        """Refuse: shed priority is not writable over the cloud yet."""
-        return await self._unsupported(circuit_id, "shed-priority", priority)
+        """Set the circuit's backup priority (`NEVER`, `SOC_THRESHOLD`, `OFF_GRID`)."""
+        value = _BACKUP_PRIORITY_BY_NAME.get(priority)
+        if value is None:
+            return await self._unsupported(circuit_id, "shed-priority", priority)
+        return await self._setting(
+            circuit_id, "shed-priority", priority, self._feed.backend.set_backup_priority, value
+        )
+
+    async def set_circuit_always_on(self, circuit_id: str, always_on: bool) -> PublishOutcome:
+        """Mark the circuit always on, so SPAN never sheds it, or hand it back."""
+        return await self._setting(
+            circuit_id,
+            "always-on",
+            "true" if always_on else "false",
+            self._feed.backend.set_always_on,
+            always_on,
+        )
+
+    async def set_circuit_powerup_rank(self, circuit_id: str, rank: int) -> PublishOutcome:
+        """Set the circuit's place in PowerUp's order."""
+        return await self._setting(
+            circuit_id, "powerup-rank", str(rank), self._feed.backend.set_powerup_rank, rank
+        )
+
+    async def _setting(
+        self,
+        circuit_id: str,
+        prop: str,
+        shown: str,
+        apply: Callable[[str, Any], None],
+        value: Any,
+    ) -> PublishOutcome:
+        """Send one load-management setting through the gate, and report what the panel did.
+
+        Unlike a relay command, the backend waits for the panel's own snapshot to
+        show the new value, so success here is `CONFIRMED`, not `ACCEPTED`.
+        """
+        node = node_for_circuit(circuit_id)
+        key = f"{node}/{prop}"
+        command = ControlCommand(
+            device_id=self._identity.serial,
+            node_id=node,
+            property_id=prop,
+            value=shown,
+            topic=f"span-cloud/{self._identity.serial}/{key}",
+        )
+        if self._interceptor is not None:
+            try:
+                await self._interceptor.before_publish(command)
+            except Exception:
+                await self._after(
+                    command, PublishOutcome(PublishState.FAILED, None, shown, detail="vetoed")
+                )
+                raise
+        try:
+            await self._hass.async_add_executor_job(apply, node, value)
+        except Exception as err:  # noqa: BLE001 — reported as the outcome
+            outcome = PublishOutcome(PublishState.FAILED, key, shown, detail=str(err))
+        else:
+            outcome = PublishOutcome(PublishState.CONFIRMED, key, shown)
+        await self._after(command, outcome)
+        return outcome
 
     async def set_dominant_power_source(self, value: str) -> PublishOutcome:
         """Refuse: not writable over the cloud yet."""

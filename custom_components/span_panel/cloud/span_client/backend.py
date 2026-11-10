@@ -177,6 +177,23 @@ CONFIG_SHED_POLICY = "shed_policy"
 CONFIG_ETHERNET_LINK = "ethernet_link"
 CONFIG_WIFI_LINK = "wifi_link"
 CONFIG_CELLULAR_LINK = "cellular_link"
+
+# The properties above: panel configuration re-read from the trait snapshot and
+# stamped when it was read, not SPAN frame data. They stand as they are, outside
+# the time-aligned history and the house clock.
+CONFIG_PROPERTIES = frozenset(
+    {
+        CONFIG_MAIN_BREAKER,
+        CONFIG_SERVICE_LIMIT,
+        CONFIG_BATTERY_LIMIT,
+        CONFIG_BACKUP_PRIORITY,
+        CONFIG_POWERUP_RANK,
+        CONFIG_SHED_POLICY,
+        CONFIG_ETHERNET_LINK,
+        CONFIG_WIFI_LINK,
+        CONFIG_CELLULAR_LINK,
+    }
+)
 RELAY_STATES = ("OPEN", "CLOSED", "UNKNOWN")
 
 # The property a node's energy is the energy *of* — see `energy_samples`.
@@ -219,14 +236,19 @@ LOUD_AFTER_ATTEMPTS = 3
 # (ALWAYS_ON_CIRCUIT, MINIMUM_RECONNECT_TIME) converges back to the truth
 # instead of sitting on our optimistic guess for a full refresh interval.
 POST_COMMAND_REFRESH_SECONDS = 3.0
-# When to re-read the snapshot after a rename, waiting for the new name: soon,
-# then once more for a slow panel. Each wait allows a little extra for the read.
-RENAME_CONFIRM_REFRESHES = (3.0, 8.0)
-RENAME_CONFIRM_GRACE_SECONDS = 5.0
+# When to re-read the snapshot after a settings change, waiting for the panel
+# to report it: soon, then once more for a slow panel. Each wait allows a little
+# extra for the read itself.
+SETTING_CONFIRM_REFRESHES = (3.0, 8.0)
+SETTING_CONFIRM_GRACE_SECONDS = 5.0
 
 
-class RenameNotApplied(RuntimeError):
-    """SPAN acknowledged a rename, but the panel kept the old name."""
+class SettingNotApplied(RuntimeError):
+    """SPAN acknowledged a settings change, but the panel did not apply it."""
+
+
+# The rename's own name for it, kept for callers that catch it by that name.
+RenameNotApplied = SettingNotApplied
 
 # Accepted command spellings. HA sends CLOSED/OPEN via MQTT discovery, but the
 # integration's switch platform and hand-written automations both reach for
@@ -1331,8 +1353,10 @@ class CloudBackend:
         self._resolved_hardware_ids: list[str] = []
         # instance id -> circuit identity, from the subscribe snapshot.
         self._circuits: dict[int, CircuitInfo] = {}
-        # Renames waiting for the panel to report the new name: instance -> (name, event).
-        self._rename_waits: dict[int, tuple[str, threading.Event]] = {}
+        # Settings waiting for the panel to report them: (applied?, event).
+        self._setting_waits: list[
+            tuple[Callable[[dict[int, CircuitInfo]], bool], threading.Event]
+        ] = []
         # What `fetch_energy` asks about, learned from the frames: resource ->
         # instance -> node id, and the site flows this panel publishes.
         self._energy_targets: dict[str, dict[int, str]] = {}
@@ -1457,13 +1481,8 @@ class CloudBackend:
         `node_id` is `circuit-<instance>`. Returns the name as stored (trimmed
         and single-spaced). Raises `ValueError` for an unknown circuit, one with
         no name to edit, or a name that fails `clean_circuit_name`; `GrpcError`
-        if SPAN rejects the call; `RenameNotApplied` if SPAN took the request
+        if SPAN rejects the call; `SettingNotApplied` if SPAN took the request
         but the panel still reports the old name after the confirmation window.
-
-        `SendMessages` only acknowledges receipt; the real answer goes to the
-        app's Ably trait channel, which we do not read. So the trait snapshot is
-        re-read until it carries the new name. Nothing is shown as renamed
-        before that, so a refused rename never flickers through the UI.
         """
         info = self._circuit_for_node(node_id)
         if info is None:
@@ -1473,28 +1492,120 @@ class CloudBackend:
         cleaned = cloud_commands.clean_circuit_name(name)
         if cleaned == info.label:
             return cleaned
-        poles = len(info.spaces)
-
         access_token = self._access_token()
         request = cloud_commands.build_rename_request(
-            info.rename_target, cleaned, poles, requester_id=self._requester_id(access_token)
+            info.rename_target,
+            cleaned,
+            len(info.spaces),
+            requester_id=self._requester_id(access_token),
         )
-        applied = threading.Event()
-        self._rename_waits[info.instance_id] = (cleaned, applied)
+        self._send_and_confirm(
+            access_token,
+            request,
+            lambda circuits: info.instance_id in circuits
+            and circuits[info.instance_id].label == cleaned,
+            what=f"the name of {node_id} ({cleaned!r})",
+        )
+        return cleaned
+
+    def set_backup_priority(self, node_id: str, priority: int) -> None:
+        """Set how the circuit behaves in an outage: 4 stays on, 3 until the threshold, 2 off."""
+        info = self._load_managed(node_id)
+        if info.backup_priority == priority:
+            return
+        self._set_load_management(
+            info,
+            cloud_commands.backup_priority_payload(priority),
+            lambda found: found.backup_priority == priority,
+            what=f"the backup priority of {node_id} ({priority})",
+        )
+
+    def set_always_on(self, node_id: str, always_on: bool) -> None:
+        """Mark the circuit always on (never shed), or hand it back to SPAN."""
+        info = self._load_managed(node_id)
+        policy = (
+            cloud_commands.SHED_POLICY_ALWAYS_ON if always_on else cloud_commands.SHED_POLICY_MANAGED
+        )
+        if info.shed_policy == policy:
+            return
+        self._set_load_management(
+            info,
+            cloud_commands.shed_policy_payload(always_on),
+            lambda found: found.shed_policy == policy,
+            what=f"always-on for {node_id} ({always_on})",
+        )
+
+    def set_powerup_rank(self, node_id: str, rank: int) -> None:
+        """Set the circuit's place in PowerUp's order."""
+        info = self._load_managed(node_id)
+        if info.powerup_rank == rank:
+            return
+        self._set_load_management(
+            info,
+            cloud_commands.powerup_rank_payload(rank),
+            lambda found: found.powerup_rank == rank,
+            what=f"the PowerUp rank of {node_id} ({rank})",
+        )
+
+    def _load_managed(self, node_id: str) -> CircuitInfo:
+        info = self._circuit_for_node(node_id)
+        if info is None:
+            raise ValueError(f"no circuit {node_id} on this panel")
+        if info.load_target is None:
+            raise ValueError(f"circuit {node_id} has no load-management settings to change")
+        return info
+
+    def _set_load_management(
+        self,
+        info: CircuitInfo,
+        payload: bytes,
+        applied: Callable[[CircuitInfo], bool],
+        *,
+        what: str,
+    ) -> None:
+        access_token = self._access_token()
+        assert info.load_target is not None
+        request = cloud_commands.build_load_management_request(
+            info.load_target, payload, requester_id=self._requester_id(access_token)
+        )
+        self._send_and_confirm(
+            access_token,
+            request,
+            lambda circuits: info.instance_id in circuits and applied(circuits[info.instance_id]),
+            what=what,
+        )
+
+    def _send_and_confirm(
+        self,
+        access_token: str,
+        request: bytes,
+        applied: Callable[[dict[int, CircuitInfo]], bool],
+        *,
+        what: str,
+    ) -> None:
+        """Post one settings command and wait until the panel reports it.
+
+        `SendMessages` only acknowledges receipt; the real answer goes to the
+        app's Ably trait channel, which we do not read. So the trait snapshot is
+        re-read until `applied` holds, and nothing is shown as changed before
+        that, so a refused change never flickers through the UI. Raises
+        `SettingNotApplied` when it never does.
+        """
+        event = threading.Event()
+        waiter = (applied, event)
+        self._setting_waits.append(waiter)
         try:
             with cloud_grpc.CloudGrpcClient(access_token, host=self._host) as grpc:
                 grpc.send_messages(request)
-            log.info("rename sent for %s -> %r; waiting for the panel", node_id, cleaned)
-            for delay in RENAME_CONFIRM_REFRESHES:
+            log.info("sent %s; waiting for the panel", what)
+            for delay in SETTING_CONFIRM_REFRESHES:
                 self._request_refresh(delay)
-                if applied.wait(delay + RENAME_CONFIRM_GRACE_SECONDS):
-                    log.info("rename applied for %s -> %r", node_id, cleaned)
-                    return cleaned
+                if event.wait(delay + SETTING_CONFIRM_GRACE_SECONDS):
+                    log.info("panel applied %s", what)
+                    return
         finally:
-            self._rename_waits.pop(info.instance_id, None)
-        raise RenameNotApplied(
-            f"SPAN took the request, but the panel still calls {node_id} {info.label!r}"
-        )
+            self._setting_waits.remove(waiter)
+        raise SettingNotApplied(f"SPAN took the request, but the panel did not apply {what}")
 
     def _adopt_circuits(self, circuits: dict[int, CircuitInfo]) -> None:
         """Take a fresh view of the circuits, describing the panel again if a name moved.
@@ -1510,9 +1621,9 @@ class CloudBackend:
         self._circuits = circuits
         if renamed:
             self._schema_sent = False
-        for instance, (wanted, applied) in list(self._rename_waits.items()):
-            if instance in circuits and circuits[instance].label == wanted:
-                applied.set()
+        for applied, event in list(self._setting_waits):
+            if applied(circuits):
+                event.set()
 
     def fetch_energy(
         self, covered_through_ms: int = 0, *, time_zone: str = "UTC"

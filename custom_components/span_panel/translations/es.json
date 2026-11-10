@@ -463,6 +463,12 @@
     "circuit_priority_not_delivered": {
       "message": "El cambio de prioridad para {circuit} no se pudo entregar al panel: {reason}. Se rechazó en lugar de ponerse en cola, por lo que la prioridad no ha cambiado."
     },
+    "circuit_setting_failed": {
+      "message": "El cambio de {setting} para {circuit} fue rechazado: {reason}. El ajuste no ha cambiado."
+    },
+    "circuit_setting_not_delivered": {
+      "message": "El cambio de {setting} para {circuit} no se aplicó: {reason}. El panel sigue mostrando el ajuste anterior."
+    },
     "circuit_relay_failed": {
       "message": "Se rechazó el comando del interruptor para {circuit}: {reason}. No se envió nada al panel, por lo que el interruptor no ha cambiado de posición."
     },

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import timedelta
+import time
 from typing import Any
 from unittest.mock import patch
 import uuid
@@ -40,8 +41,12 @@ from custom_components.span_panel.cloud.span_client.backend import (
 )
 from custom_components.span_panel.cloud.span_client.cloud_commands import (
     MAX_CIRCUIT_NAME_LENGTH,
+    backup_priority_payload,
+    build_load_management_request,
     build_rename_request,
     clean_circuit_name,
+    powerup_rank_payload,
+    shed_policy_payload,
 )
 from custom_components.span_panel.cloud.span_client.cloud_pb import (
     field_bytes,
@@ -176,6 +181,7 @@ class FakeBackend:
         self.serial = serial
         self.commands: list[tuple[str, str]] = []
         self.renames: list[tuple[str, str]] = []
+        self.settings: list[tuple[str, str, object]] = []
         self.on_reading: Callable[[Reading], None] | None = None
         self.started = False
         self.stopped = False
@@ -199,6 +205,26 @@ class FakeBackend:
         self.commands.append((key, value))
         assert self.on_reading is not None
         self.on_reading(Reading(key=key, value=value, timestamp=0.0))
+
+    def set_backup_priority(self, node_id: str, priority: int) -> None:
+        """Record the priority and report it back, as the panel's next snapshot would."""
+        self.settings.append((node_id, "backup_priority", priority))
+        self._report(f"{node_id}/backup_priority", str(priority))
+
+    def set_always_on(self, node_id: str, always_on: bool) -> None:
+        """Record always-on and report the shed policy it becomes."""
+        self.settings.append((node_id, "always_on", always_on))
+        self._report(f"{node_id}/shed_policy", "1" if always_on else "2")
+
+    def set_powerup_rank(self, node_id: str, rank: int) -> None:
+        """Record the rank and report it back."""
+        self.settings.append((node_id, "powerup_rank", rank))
+        self._report(f"{node_id}/powerup_rank", str(rank))
+
+    def _report(self, key: str, value: str) -> None:
+        # Stamped now: numeric readings only move forward in time.
+        assert self.on_reading is not None
+        self.on_reading(Reading(key=key, value=value, timestamp=time.time()))
 
     def rename_circuit(self, node_id: str, name: str) -> str:
         """Record the rename, cleaning the name as the real backend does."""
@@ -973,8 +999,8 @@ def _renaming_backend(tmp_path, monkeypatch, *, panel_applies: bool) -> CloudBac
     backend._schema_sent = True
     monkeypatch.setattr(backend, "_access_token", lambda: "token")
     monkeypatch.setattr(backend, "_requester_id", lambda token: "user-1")
-    monkeypatch.setattr(backend_module, "RENAME_CONFIRM_REFRESHES", (0.0, 0.0))
-    monkeypatch.setattr(backend_module, "RENAME_CONFIRM_GRACE_SECONDS", 0.05)
+    monkeypatch.setattr(backend_module, "SETTING_CONFIRM_REFRESHES", (0.0, 0.0))
+    monkeypatch.setattr(backend_module, "SETTING_CONFIRM_GRACE_SECONDS", 0.05)
     monkeypatch.setattr(cloud_grpc, "CloudGrpcClient", _RecordingGrpc)
     _RecordingGrpc.sent = []
 
@@ -1019,7 +1045,7 @@ def test_a_rename_the_panel_ignores_is_reported_and_never_shown(tmp_path, monkey
         raise AssertionError("an ignored rename was reported as done")
     assert backend._circuits[21].label == "Kitchen"
     assert backend._schema_sent is True  # nothing changed, so nothing reloads
-    assert backend._rename_waits == {}
+    assert backend._setting_waits == []
 
 
 def test_a_rename_made_in_the_span_app_reaches_the_schema(tmp_path) -> None:
@@ -1031,3 +1057,199 @@ def test_a_rename_made_in_the_span_app_reaches_the_schema(tmp_path) -> None:
     assert backend._schema_sent is True  # nothing moved, nothing to re-describe
     backend._adopt_circuits(parse_trait_snapshot(_labelled_circuit_traits("Pantry")))
     assert backend._schema_sent is False
+
+
+def test_a_circuit_knows_its_load_management_entry() -> None:
+    """The 1/31 entry that points back at the circuit is what a setting addresses."""
+    circuits = parse_trait_snapshot(_main_40_traits())
+    target = circuits[22].load_target
+    assert target is not None
+    assert (target.resource_id, target.instance_id, target.metadata) == (
+        "gw-40",
+        22,
+        (1, 4, 31, None),
+    )
+
+
+def test_a_rank_the_homeowner_set_overrides_the_default() -> None:
+    """Config #20 (preferred) wins over #22 (default) when the panel carries both."""
+    raw = field_message(
+        1,
+        field_message(1, field_string(1, "gw-40"))
+        + _trait(15, 22, field_varint(2, 1))
+        + _load_management(22, field_varint(1, 2) + field_varint(20, 3) + field_varint(22, 47)),
+    )
+    assert parse_trait_snapshot(raw)[22].powerup_rank == 3
+
+
+def _load_command(body: bytes) -> tuple[Any, Any]:
+    """Unwrap a load-management request to its trait message and its command."""
+    message = parse(body).get_msg(1)
+    return message, parse(message.get_msg(14).get_msg(2).get_bytes(1))
+
+
+def test_load_management_commands_carry_one_setting_each() -> None:
+    """Backup priority, always-on and PowerUp rank, as SwitchLoadManagementCommandRequests."""
+    target = parse_trait_snapshot(_main_40_traits())[22].load_target
+
+    message, command = _load_command(
+        build_load_management_request(target, backup_priority_payload(4), requester_id="u")
+    )
+    assert message.get_msg(1).get_int_opt(3) == 31
+    assert message.get_msg(2).get_msg(2).get_int_opt(1) == 22
+    assert command.get_msg(5).get_msg(1).get_int_opt(1) == 4
+
+    _message, command = _load_command(
+        build_load_management_request(target, shed_policy_payload(True), requester_id="u")
+    )
+    assert command.get_int_opt(6) is None  # a message, not a bare varint
+    assert command.get_msg(6).get_int_opt(1) == 1
+    _message, command = _load_command(
+        build_load_management_request(target, shed_policy_payload(False), requester_id="u")
+    )
+    assert command.get_msg(6).get_int_opt(1) == 2
+
+    _message, command = _load_command(
+        build_load_management_request(target, powerup_rank_payload(5), requester_id="u")
+    )
+    assert command.get_msg(4).get_int_opt(1) == 5
+
+    for bad in (lambda: backup_priority_payload(1), lambda: powerup_rank_payload(0)):
+        try:
+            bad()
+        except ValueError:
+            continue
+        raise AssertionError("an out-of-range setting was built")
+
+
+def test_the_backend_sets_load_management_once_the_panel_reports_it(tmp_path, monkeypatch) -> None:
+    """Each setting posts once and returns when a re-read snapshot carries it."""
+    backend = CloudBackend(tmp_path / "tokens.json", "device-uuid", user_id="user-1")
+    backend._adopt_circuits(parse_trait_snapshot(_main_40_traits()))
+    monkeypatch.setattr(backend, "_access_token", lambda: "token")
+    monkeypatch.setattr(backend, "_requester_id", lambda token: "user-1")
+    monkeypatch.setattr(backend_module, "SETTING_CONFIRM_REFRESHES", (0.0,))
+    monkeypatch.setattr(backend_module, "SETTING_CONFIRM_GRACE_SECONDS", 0.05)
+    sent: list[bytes] = []
+
+    class Grpc(_RecordingGrpc):
+        def send_messages(self, request: bytes) -> bytes:
+            sent.append(request)
+            return b""
+
+    monkeypatch.setattr(cloud_grpc, "CloudGrpcClient", Grpc)
+    applied = {
+        "config": field_varint(1, 2) + field_message(2, field_varint(1, 3)) + field_varint(22, 47)
+    }
+
+    def refresh(delay: float) -> None:
+        raw = field_message(
+            1,
+            field_message(1, field_string(1, "gw-40"))
+            + _trait(15, 22, field_varint(2, 1))
+            + _load_management(22, applied["config"]),
+        )
+        backend._adopt_circuits(parse_trait_snapshot(raw))
+
+    monkeypatch.setattr(backend, "_request_refresh", refresh)
+
+    applied["config"] = (
+        field_varint(1, 2) + field_message(2, field_varint(1, 4)) + field_varint(22, 47)
+    )
+    backend.set_backup_priority("circuit-22", 4)
+    assert len(sent) == 1
+    backend.set_backup_priority("circuit-22", 4)  # already so: nothing sent
+    assert len(sent) == 1
+
+    applied["config"] = (
+        field_varint(1, 1) + field_message(2, field_varint(1, 4)) + field_varint(22, 47)
+    )
+    backend.set_always_on("circuit-22", True)
+    applied["config"] += field_varint(20, 2)
+    backend.set_powerup_rank("circuit-22", 2)
+    assert len(sent) == 3
+
+    try:
+        backend.set_powerup_rank("circuit-22", 9)  # the panel keeps 2
+    except RenameNotApplied:
+        pass
+    else:
+        raise AssertionError("an ignored rank was reported as set")
+
+
+async def test_load_settings_are_entities_that_reach_the_panel(hass: HomeAssistant) -> None:
+    """Priority select, always-on switch and PowerUp number, each sent to the right panel."""
+    FakeStream.backends = {}
+    schema, readings = PANELS[SERIAL_16]
+    readings = {
+        **readings,
+        "circuit-21/backup_priority": "2",
+        "circuit-21/shed_policy": "2",
+        "circuit-21/powerup_rank": "4",
+    }
+    entry_40 = _entry(SERIAL_40, "MAIN 40")
+    entry_16 = _entry(SERIAL_16, "MAIN 16")
+    entry_40.add_to_hass(hass)
+    entry_16.add_to_hass(hass)
+
+    with (
+        patch.dict(PANELS, {SERIAL_16: (schema, readings)}),
+        patch.object(hub_module, "discover", return_value=[SITE]),
+        patch.object(hub_module, "SiteStream", FakeStream),
+        patch.object(hub_module, "write_tokens_if_missing"),
+    ):
+        assert await hass.config_entries.async_setup(entry_40.entry_id)
+        await hass.async_block_till_done()
+
+        registry = er.async_get(hass)
+        garage = [
+            e
+            for e in registry.entities.values()
+            if e.config_entry_id == entry_16.entry_id and "garage" in e.entity_id
+        ]
+        priority = next(e.entity_id for e in garage if e.domain == "select")
+        always_on = next(e.entity_id for e in garage if e.entity_id.endswith("_always_on"))
+        rank = next(e.entity_id for e in garage if e.domain == "number")
+        assert hass.states.get(priority).state == "off_grid"
+        assert hass.states.get(always_on).state == "off"
+        assert float(hass.states.get(rank).state) == 4
+
+        await hass.services.async_call(
+            "select", "select_option", {"entity_id": priority, "option": "never"}, blocking=True
+        )
+        await hass.services.async_call(
+            "number", "set_value", {"entity_id": rank, "value": 2}, blocking=True
+        )
+        # Readings are flushed, then the panels' snapshots move on the house
+        # clock's next tick: two steps of the clock.
+        for step in (10, 20):
+            async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=step))
+            await hass.async_block_till_done()
+        assert hass.states.get(priority).state == "never"
+        assert float(hass.states.get(rank).state) == 2
+
+        # Always on withdraws the circuit's relay switch and priority select, so
+        # the entry reloads; the fake panel then starts from its fixture again,
+        # which is why its state is not checked after this.
+        await hass.services.async_call("switch", "turn_on", {"entity_id": always_on}, blocking=True)
+        await hass.async_block_till_done()
+
+        assert FakeStream.backends[SERIAL_16].settings == [
+            ("circuit-21", "backup_priority", 4),
+            ("circuit-21", "powerup_rank", 2),
+            ("circuit-21", "always_on", True),
+        ]
+        assert FakeStream.backends[SERIAL_40].settings == []
+
+
+def test_configuration_stands_outside_the_aligned_history() -> None:
+    """A setting applies as soon as it is read, and never moves the panel's watermark."""
+    feed = hub_module.PanelFeed(panel=SITE.panels[0], backend=None)  # type: ignore[arg-type]
+    feed.record(Reading(key="circuit-21/power", value="152.4", timestamp=100.0))
+    feed.record(Reading(key="circuit-21/powerup_rank", value="2", timestamp=5_000.0))
+    feed.record(Reading(key="panel/ethernet_link", value="1", timestamp=5_000.0))
+    feed.readings["circuit-21/powerup_rank"] = "2"
+
+    assert feed.watermark == 100.0
+    assert "circuit-21/powerup_rank" not in feed.history
+    assert feed.readings_at(100.0)["circuit-21/powerup_rank"] == "2"

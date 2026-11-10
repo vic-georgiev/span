@@ -463,6 +463,12 @@
     "circuit_priority_not_delivered": {
       "message": "The priority change for {circuit} could not be delivered to the panel: {reason}. It was refused rather than queued, so the priority is unchanged."
     },
+    "circuit_setting_failed": {
+      "message": "The {setting} change for {circuit} was refused: {reason}. The setting is unchanged."
+    },
+    "circuit_setting_not_delivered": {
+      "message": "The {setting} change for {circuit} did not take effect: {reason}. The panel still reports the old setting."
+    },
     "circuit_relay_failed": {
       "message": "The breaker command for {circuit} was refused: {reason}. Nothing was sent to the panel, so the breaker has not moved."
     },

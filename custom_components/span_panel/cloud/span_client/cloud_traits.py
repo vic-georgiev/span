@@ -146,6 +146,9 @@ class CircuitInfo:
     # How to address this circuit's breaker (trait 1/15) to rename it. `None`
     # when the circuit has no label, as the battery's breaker does not.
     rename_target: SwitchTarget | None = None
+    # How to address this circuit's load-management entry (trait 1/31) to set
+    # its backup priority, PowerUp rank or always-on. `None` without one.
+    load_target: SwitchTarget | None = None
 
     @property
     def display_name(self) -> str:
@@ -244,6 +247,7 @@ def _circuit_from(
             backup_priority=priority,
             powerup_rank=rank,
             shed_policy=policy,
+            load_target=_load_target_for(instance, traits),
         )
 
     refs = _trait_refs(position)
@@ -284,6 +288,7 @@ def _circuit_from(
         powerup_rank=rank,
         shed_policy=policy,
         rename_target=rename_target,
+        load_target=_load_target_for(instance, traits),
     )
 
 
@@ -305,7 +310,23 @@ def _load_management_for(
         return None, None, None
     backup = _msg_or_none(config, 2)
     priority = _int_or_none(backup, 1)
-    return (priority or None), _int_or_none(config, 22), _int_or_none(config, 1)
+    # #20 is the rank the homeowner set (SetPreferredDisconnectRank); #22 the
+    # default it overrides. The app lists by whichever applies.
+    rank = _int_or_none(config, 20) or _int_or_none(config, 22)
+    return (priority or None), rank, _int_or_none(config, 1)
+
+
+def _load_target_for(
+    instance: int, traits: dict[tuple[int, int, int], TraitEntry]
+) -> SwitchTarget | None:
+    """How to address the circuit's load-management entry (1/31), when it is this circuit's."""
+    entry = traits.get((VENDOR_SPAN, TRAIT_SWITCH, instance))
+    inner = _trait_inner(traits, TRAIT_SWITCH, instance)
+    if entry is None or entry.resource_id is None or inner is None:
+        return None
+    if (VENDOR_SPAN, TRAIT_CIRCUIT, instance) not in _trait_refs(inner):
+        return None
+    return SwitchTarget(resource_id=entry.resource_id, instance_id=instance, metadata=entry.metadata)
 
 
 @dataclass(frozen=True)
