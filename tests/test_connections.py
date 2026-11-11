@@ -25,7 +25,14 @@ from custom_components.span_panel.connections import (
     local_owner,
     serial_key,
 )
-from custom_components.span_panel.const import CONF_API_VERSION, DOMAIN
+from custom_components.span_panel.const import (
+    CONF_API_VERSION,
+    CONF_CLOUD_DEVICE_UUID,
+    CONF_CLOUD_TOKENS,
+    CONF_CLOUD_USER_ID,
+    DOMAIN,
+)
+from custom_components.span_panel.diagnostics import async_get_config_entry_diagnostics
 
 from .test_cloud_transport import SERIAL_16, SERIAL_40, SITE, FakeStream, _entry
 
@@ -174,3 +181,31 @@ async def test_the_cloud_entry_is_reloaded_only_when_its_role_changes(
         cloud.mock_state(hass, ConfigEntryState.NOT_LOADED)
         _async_reload_cloud_connection(hass, local, standing_by=True)
         reload.assert_not_called()
+
+
+async def test_a_cloud_panels_diagnostics_download_without_its_sign_in(hass: HomeAssistant) -> None:
+    """A cloud panel has no device tree to export, and its account stays out of the file."""
+    FakeStream.backends = {}
+    entry = _entry(SERIAL_40, "MAIN 40")
+    entry.add_to_hass(hass)
+
+    with (
+        patch.object(hub_module, "discover", return_value=[SITE]),
+        patch.object(hub_module, "SiteStream", FakeStream),
+        patch.object(hub_module, "write_tokens_if_missing"),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        report = await async_get_config_entry_diagnostics(hass, entry)
+
+        assert report["device_tree"] is None
+        assert report["device_tree_unavailable"] == "cloud_connection"
+        stored = report["config_entry"]["data"]
+        for key in (CONF_CLOUD_TOKENS, CONF_CLOUD_USER_ID, CONF_CLOUD_DEVICE_UUID):
+            assert stored[key] == "**REDACTED**"
+        # What tells one connection's circuits from another's: the breaker spaces.
+        assert all("tabs" in circuit for circuit in report["circuits"].values())
+
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()

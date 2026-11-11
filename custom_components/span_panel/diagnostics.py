@@ -20,6 +20,9 @@ from span_panel_api.exceptions import SpanPanelValidationError
 
 from .adoption import adopted_control_count, classify
 from .const import (
+    CONF_CLOUD_DEVICE_UUID,
+    CONF_CLOUD_TOKENS,
+    CONF_CLOUD_USER_ID,
     CONF_EBUS_BROKER_PASSWORD,
     CONF_EBUS_BROKER_USERNAME,
     CONF_HOP_PASSPHRASE,
@@ -46,6 +49,11 @@ TO_REDACT = {
     # is injected separately below; `async_redact_data` is key-based and cannot
     # transform a value.
     CONF_PANEL_CA_PEM,
+    # A cloud entry's sign-in: the tokens are the account, and the user and
+    # device ids name it.
+    CONF_CLOUD_TOKENS,
+    CONF_CLOUD_USER_ID,
+    CONF_CLOUD_DEVICE_UUID,
     "password",
     "username",
 }
@@ -176,7 +184,9 @@ class DeviceTreeBlock(TypedDict):
     """
 
     device_tree: MaskedTree | None
-    device_tree_unavailable: NotRequired[Literal["flat_data_model", "not_described"]]
+    device_tree_unavailable: NotRequired[
+        Literal["flat_data_model", "not_described", "cloud_connection"]
+    ]
 
 
 def _device_tree(client: SpanMqttClient) -> DeviceTreeBlock:
@@ -190,8 +200,12 @@ def _device_tree(client: SpanMqttClient) -> DeviceTreeBlock:
     The tree is the adapter's last view, so a panel that has gone offline still
     reports it -- that is the report a maintainer most needs. `flat_data_model`
     is a schema 0 panel, which publishes no device tree; `not_described` is a
-    parent/child panel whose root device has not described itself yet.
+    parent/child panel whose root device has not described itself yet;
+    `cloud_connection` is a panel read through SPAN's cloud, which carries no
+    device tree at all.
     """
+    if not hasattr(client, "masked_tree"):
+        return {"device_tree": None, "device_tree_unavailable": "cloud_connection"}
     tree = client.masked_tree()
     if tree is not None:
         return {"device_tree": tree}
