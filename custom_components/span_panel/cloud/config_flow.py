@@ -237,14 +237,15 @@ class CloudFlowSteps(_FlowBase):
 class CloudAccountSubentryFlow(ConfigSubentryFlow):
     """Link a SPAN account to a panel read locally (see `link`).
 
-    Sign in, then say which of the account's panels this one is. Only the tokens
-    SPAN issues are kept. The link is checked against the panel's breaker spaces
-    the first time it is used, so a wrong pick is refused there, not acted on.
+    Sign in, and the account's panel that is this one is found for you. The two
+    sides give one panel different serials, so it is found by what they report
+    identically: the breaker spaces its circuits occupy. A panel already linked
+    to another entry is not considered. Only if more than one panel fits is the
+    choice asked for. Only the tokens SPAN issues are kept.
     """
 
-    _tokens: dict[str, Any]
-    _user_id: str
-    _panels: dict[str, PanelInfo]
+    _matches: dict[str, dict[str, Any]]
+    _titles: dict[str, str]
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
         """Sign in to the SPAN account this panel belongs to."""
@@ -258,62 +259,90 @@ class CloudAccountSubentryFlow(ConfigSubentryFlow):
             if isinstance(signed_in, str):
                 errors["base"] = signed_in
             else:
-                self._tokens, self._user_id, self._panels = signed_in
-                if not self._panels:
-                    return self.async_abort(reason="no_panels")
-                return await self.async_step_panel()
+                return await self._async_find_panel(*signed_in)
         return self.async_show_form(step_id="user", data_schema=CLOUD_LOGIN_SCHEMA, errors=errors)
 
-    def _panel_schema(self) -> vol.Schema:
-        options = [
-            SelectOptionDict(value=key, label=panel_title(panel).removeprefix("SPAN "))
-            for key, panel in self._panels.items()
-        ]
-        return vol.Schema(
+    def _linked_elsewhere(self) -> set[str]:
+        """Return the account panels other entries are already linked to."""
+        own = self._get_entry().entry_id
+        return {
+            account.data[CONF_CLOUD_PANEL_KEY]
+            for entry in self.hass.config_entries.async_entries(DOMAIN)
+            if entry.entry_id != own and (account := cloud_account(entry)) is not None
+        }
+
+    async def _async_find_panel(
+        self, tokens: dict[str, Any], user_id: str, panels: dict[str, PanelInfo]
+    ) -> SubentryFlowResult:
+        """Find which of the account's panels this entry's panel is, and link it."""
+        if not panels:
+            return self.async_abort(reason="no_panels")
+        taken = self._linked_elsewhere()
+        candidates = {key: panel for key, panel in panels.items() if key not in taken}
+        if not candidates:
+            return self.async_abort(reason="all_linked")
+
+        self._matches, self._titles = {}, {}
+        errors: set[str] = set()
+        for key, panel in candidates.items():
+            data: dict[str, Any] = {
+                CONF_CLOUD_TOKENS: tokens,
+                CONF_CLOUD_USER_ID: user_id,
+                CONF_CLOUD_DEVICE_UUID: str(uuid.uuid4()).upper(),
+                CONF_CLOUD_PANEL_KEY: panel.key,
+                CONF_CLOUD_MODEL: panel.model,
+            }
+            error = await self._async_read_panel(data)
+            if error is None:
+                self._matches[key] = data
+                self._titles[key] = panel_title(panel).removeprefix("SPAN ")
+            else:
+                errors.add(error)
+
+        if len(self._matches) == 1:
+            return self._link(next(iter(self._matches)))
+        if self._matches:
+            return await self.async_step_panel()
+        # Why nothing fit, most actionable first: the local panel is not
+        # running, SPAN could not be reached, or no panel has these breakers.
+        for reason in ("panel_not_loaded", "cannot_connect"):
+            if reason in errors:
+                return self.async_abort(reason=reason)
+        return self.async_abort(
+            reason="no_matching_panel",
+            description_placeholders={"panel": self._get_entry().title},
+        )
+
+    def _link(self, key: str) -> SubentryFlowResult:
+        return self.async_create_entry(
+            title=self._titles[key], data=self._matches[key], unique_id=key
+        )
+
+    async def async_step_panel(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Choose among the account's panels that all have this panel's breakers."""
+        if user_input is not None:
+            return self._link(user_input[CONF_CLOUD_PANEL_KEY])
+        options = [SelectOptionDict(value=key, label=title) for key, title in self._titles.items()]
+        schema = vol.Schema(
             {
                 vol.Required(CONF_CLOUD_PANEL_KEY): SelectSelector(
                     SelectSelectorConfig(options=options)
                 )
             }
         )
-
-    async def async_step_panel(
-        self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
-        """Say which of the account's panels this entry's panel is."""
-        if user_input is None:
-            return self.async_show_form(
-                step_id="panel",
-                data_schema=self._panel_schema(),
-                description_placeholders={"panel": self._get_entry().title},
-            )
-        panel = self._panels[user_input[CONF_CLOUD_PANEL_KEY]]
-        data: dict[str, Any] = {
-            CONF_CLOUD_TOKENS: self._tokens,
-            CONF_CLOUD_USER_ID: self._user_id,
-            CONF_CLOUD_DEVICE_UUID: str(uuid.uuid4()).upper(),
-            CONF_CLOUD_PANEL_KEY: panel.key,
-            CONF_CLOUD_MODEL: panel.model,
-        }
-        error = await self._async_read_panel(data)
-        if error is not None:
-            return self.async_show_form(
-                step_id="panel",
-                data_schema=self._panel_schema(),
-                description_placeholders={"panel": self._get_entry().title},
-                errors={"base": error},
-            )
-        return self.async_create_entry(
-            title=panel_title(panel).removeprefix("SPAN "),
-            data=data,
-            unique_id=panel.key,
+        return self.async_show_form(
+            step_id="panel",
+            data_schema=schema,
+            description_placeholders={"panel": self._get_entry().title},
         )
 
     async def _async_read_panel(self, data: dict[str, Any]) -> str | None:
-        """Check the chosen panel is this one, and keep what only the cloud says about it.
+        """Check whether an account panel is this one, and keep what only the cloud says about it.
 
-        Matched by breaker spaces against the panel as SPAN API reads it now, so
-        a wrong pick is refused here. The breakers SPAN API leaves out are read
+        Matched by breaker spaces against the panel as SPAN API reads it now.
+        The breakers SPAN API leaves out are read
         while the account's stream is open and kept with the link. Returns an
         error key, or None.
         """

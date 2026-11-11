@@ -1147,7 +1147,7 @@
         },
         "panel": {
           "title": "De quel panneau s'agit-il ?",
-          "description": "Choisissez le panneau de votre compte SPAN qui est {panel}. Il est comparé aux emplacements de disjoncteurs de ce panneau avant d'être lié.",
+          "description": "Plusieurs panneaux de votre compte SPAN ont les disjoncteurs de {panel}. Choisissez le bon.",
           "data": {
             "cloud_panel_key": "Panneau dans le compte SPAN"
           }
@@ -1155,13 +1155,15 @@
       },
       "error": {
         "invalid_auth": "Authentification invalide",
-        "cannot_connect": "Impossible de joindre le cloud de SPAN",
-        "wrong_panel": "Ce panneau SPAN n'a pas les disjoncteurs de ce panneau : choisissez le bon panneau.",
-        "panel_not_loaded": "Ce panneau n'est pas en marche. Attendez qu'il soit connecté, puis liez le compte."
+        "cannot_connect": "Impossible de joindre le cloud de SPAN"
       },
       "abort": {
         "already_linked": "Ce panneau a déjà un compte SPAN. Supprimez-le d'abord pour en associer un autre.",
-        "no_panels": "Ce compte SPAN ne contient aucun panneau."
+        "no_panels": "Ce compte SPAN ne contient aucun panneau.",
+        "all_linked": "Tous les panneaux de ce compte SPAN sont déjà liés à un panneau dans Home Assistant.",
+        "no_matching_panel": "Aucun panneau de ce compte SPAN n'a les disjoncteurs de {panel}.",
+        "panel_not_loaded": "Ce panneau n'est pas en marche. Attendez qu'il soit connecté, puis liez le compte.",
+        "cannot_connect": "Le cloud de SPAN est injoignable"
       }
     }
   }

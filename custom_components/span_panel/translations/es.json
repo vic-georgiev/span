@@ -1147,7 +1147,7 @@
         },
         "panel": {
           "title": "¿Qué panel es este?",
-          "description": "Elija el panel de su cuenta de SPAN que es {panel}. Se comprueba con los espacios de interruptores de este panel antes de vincularlo.",
+          "description": "Más de un panel de su cuenta de SPAN tiene los interruptores de {panel}. Elija cuál es.",
           "data": {
             "cloud_panel_key": "Panel en la cuenta de SPAN"
           }
@@ -1155,13 +1155,15 @@
       },
       "error": {
         "invalid_auth": "Autenticación no válida",
-        "cannot_connect": "No se pudo conectar con la nube de SPAN",
-        "wrong_panel": "Ese panel de SPAN no tiene los interruptores de este panel: elija el panel correcto.",
-        "panel_not_loaded": "Este panel no está en funcionamiento. Espere a que se conecte y vincule la cuenta."
+        "cannot_connect": "No se pudo conectar con la nube de SPAN"
       },
       "abort": {
         "already_linked": "Este panel ya tiene una cuenta de SPAN. Quítala primero para vincular otra.",
-        "no_panels": "Esta cuenta de SPAN no tiene paneles."
+        "no_panels": "Esta cuenta de SPAN no tiene paneles.",
+        "all_linked": "Todos los paneles de esta cuenta de SPAN ya están vinculados a un panel en Home Assistant.",
+        "no_matching_panel": "Ningún panel de esta cuenta de SPAN tiene los interruptores de {panel}.",
+        "panel_not_loaded": "Este panel no está en funcionamiento. Espere a que se conecte y vincule la cuenta.",
+        "cannot_connect": "No se pudo acceder a la nube de SPAN"
       }
     }
   }

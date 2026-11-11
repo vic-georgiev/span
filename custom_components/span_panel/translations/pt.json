@@ -1147,7 +1147,7 @@
         },
         "panel": {
           "title": "Que painel é este?",
-          "description": "Escolha o painel da sua conta SPAN que é {panel}. Ele é comparado com as posições de disjuntores deste painel antes de ser vinculado.",
+          "description": "Mais de um painel da sua conta SPAN tem os disjuntores de {panel}. Escolha qual é.",
           "data": {
             "cloud_panel_key": "Painel na conta SPAN"
           }
@@ -1155,13 +1155,15 @@
       },
       "error": {
         "invalid_auth": "Autenticação inválida",
-        "cannot_connect": "Não foi possível contactar a nuvem da SPAN",
-        "wrong_panel": "Esse painel SPAN não tem os disjuntores deste painel: escolha o painel correto.",
-        "panel_not_loaded": "Este painel não está em funcionamento. Aguarde até que esteja conectado e vincule a conta."
+        "cannot_connect": "Não foi possível contactar a nuvem da SPAN"
       },
       "abort": {
         "already_linked": "Este painel já tem uma conta SPAN. Remova-a primeiro para associar outra.",
-        "no_panels": "Esta conta SPAN não tem painéis."
+        "no_panels": "Esta conta SPAN não tem painéis.",
+        "all_linked": "Todos os painéis desta conta SPAN já estão vinculados a um painel no Home Assistant.",
+        "no_matching_panel": "Nenhum painel desta conta SPAN tem os disjuntores de {panel}.",
+        "panel_not_loaded": "Este painel não está em funcionamento. Aguarde até que esteja conectado e vincule a conta.",
+        "cannot_connect": "Não foi possível acessar a nuvem da SPAN"
       }
     }
   }

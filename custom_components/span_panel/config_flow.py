@@ -45,7 +45,7 @@ from span_panel_api.exceptions import (
 import voluptuous as vol
 
 from .cloud.config_flow import CONF_USE_SPAN_CLOUD, CloudAccountSubentryFlow, CloudFlowSteps
-from .cloud.link import SUBENTRY_CLOUD_ACCOUNT
+from .cloud.link import SUBENTRY_CLOUD_ACCOUNT, cloud_account
 from .config_flow_options import (
     GENERAL_OPTIONS_SCHEMA,
     get_general_options_defaults,
@@ -195,8 +195,14 @@ class SpanPanelConfigFlow(CloudFlowSteps, FeedSteps, config_entries.ConfigFlow):
     def async_get_supported_subentry_types(
         cls, config_entry: ConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
-        """Offer a SPAN account on a local panel; a cloud panel already is one."""
+        """Offer a SPAN account on a local panel that has none.
+
+        A cloud panel already is its account, and a panel takes one account, so
+        neither is listed where Home Assistant offers "Add SPAN account".
+        """
         if config_entry.data.get(CONF_API_VERSION) == API_VERSION_CLOUD:
+            return {}
+        if cloud_account(config_entry) is not None:
             return {}
         return {SUBENTRY_CLOUD_ACCOUNT: CloudAccountSubentryFlow}
 

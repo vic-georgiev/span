@@ -39,7 +39,7 @@ from custom_components.span_panel.diagnostics import TO_REDACT
 from custom_components.span_panel.websocket import _reserved_breakers
 
 from .factories import SpanCircuitSnapshotFactory, SpanPanelSnapshotFactory
-from .test_cloud_transport import SERIAL_40, SITE, TOKENS, FakeStream, _entry
+from .test_cloud_transport import SERIAL_16, SERIAL_40, SITE, TOKENS, FakeStream, _entry
 
 LOCAL_SERIAL = "xg-test-40"
 
@@ -152,8 +152,8 @@ def _running(snapshot: object) -> object:
     )
 
 
-async def _choose_panel(hass: HomeAssistant, entry: MockConfigEntry) -> dict:
-    """Sign in and choose the account's MAIN 40 as this panel."""
+async def _sign_in(hass: HomeAssistant, entry: MockConfigEntry) -> dict:
+    """Open "Add SPAN account" on the panel and sign in."""
     with patch(
         "custom_components.span_panel.cloud.config_flow._sign_in",
         return_value=(TOKENS, "user-1", [SITE]),
@@ -162,28 +162,26 @@ async def _choose_panel(hass: HomeAssistant, entry: MockConfigEntry) -> dict:
             (entry.entry_id, SUBENTRY_CLOUD_ACCOUNT), context={"source": "user"}
         )
         assert result["step_id"] == "user"
-        result = await hass.config_entries.subentries.async_configure(
+        return await hass.config_entries.subentries.async_configure(
             result["flow_id"], {"email": "owner@example.com", "password": "not-stored"}
         )
-        assert result["step_id"] == "panel"
-        return await hass.config_entries.subentries.async_configure(
-            result["flow_id"], {CONF_CLOUD_PANEL_KEY: SERIAL_40}
-        )
 
 
-async def test_signing_in_links_the_account_to_the_local_panel(hass: HomeAssistant) -> None:
+async def test_signing_in_finds_and_links_the_panel(hass: HomeAssistant) -> None:
     FakeStream.backends = {}
     entry = _local_entry(linked=False)
     entry.add_to_hass(hass)
 
-    # Locally only the breaker on space 9 is published; the cloud also has 11/13,
-    # as SPAN API leaves out a MAIN 40's battery breaker on 46/48.
+    # Locally only the breaker on space 9 is published; the account's MAIN 40
+    # also has 11/13, as SPAN API leaves out a MAIN 40's battery breaker. The
+    # account's MAIN 16 has no breaker on space 9, so it is not this panel.
     discover, stream, tokens = _cloud()
     with discover, stream, tokens, _running(_local_snapshot({"circuit-1": [9]})):
-        result = await _choose_panel(hass, entry)
+        result = await _sign_in(hass, entry)
+        # Found by its breakers: nothing to choose.
         assert result["type"] is FlowResultType.CREATE_ENTRY
         # Read once while linking, and nothing left running afterwards.
-        assert FakeStream.backends[SERIAL_40].stopped
+        assert all(backend.stopped for backend in FakeStream.backends.values())
 
         account = cloud_account(entry)
         assert account is not None
@@ -195,18 +193,65 @@ async def test_signing_in_links_the_account_to_the_local_panel(hass: HomeAssista
         assert entry.unique_id == LOCAL_SERIAL
         assert entry.data[CONF_API_VERSION] == "v2"
 
-        # One account per panel.
-        result = await hass.config_entries.subentries.async_init(
-            (entry.entry_id, SUBENTRY_CLOUD_ACCOUNT), context={"source": "user"}
+
+async def test_a_panel_linked_to_another_entry_is_not_considered(hass: HomeAssistant) -> None:
+    FakeStream.backends = {}
+    _local_entry().add_to_hass(hass)  # already holds the account's MAIN 40
+    other = MockConfigEntry(domain=DOMAIN, unique_id="xg-test-other", data={CONF_API_VERSION: "v2"})
+    other.add_to_hass(hass)
+    discover, stream, tokens = _cloud()
+    # This panel's breakers would fit the MAIN 40, which is taken.
+    with discover, stream, tokens, _running(_local_snapshot({"circuit-1": [9]})):
+        result = await _sign_in(hass, other)
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_matching_panel"
+    assert cloud_account(other) is None
+
+
+async def test_no_panel_with_these_breakers_links_nothing(hass: HomeAssistant) -> None:
+    FakeStream.backends = {}
+    entry = _local_entry(linked=False)
+    entry.add_to_hass(hass)
+    discover, stream, tokens = _cloud()
+    with discover, stream, tokens, _running(_local_snapshot({"a": [15], "b": [20, 22]})):
+        result = await _sign_in(hass, entry)
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_matching_panel"
+    assert cloud_account(entry) is None
+
+
+async def test_a_panel_that_is_not_running_is_not_linked_blind(hass: HomeAssistant) -> None:
+    entry = _local_entry(linked=False)
+    entry.add_to_hass(hass)
+    with _running(None):
+        result = await _sign_in(hass, entry)
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "panel_not_loaded"
+    assert cloud_account(entry) is None
+
+
+async def test_two_panels_with_these_breakers_are_asked_about(hass: HomeAssistant) -> None:
+    FakeStream.backends = {}
+    entry = _local_entry(linked=False)
+    entry.add_to_hass(hass)
+    discover, stream, tokens = _cloud()
+    # A panel with no breaker in a space fits any panel, so both are offered.
+    with discover, stream, tokens, _running(_local_snapshot({"remote-ct": []})):
+        result = await _sign_in(hass, entry)
+        assert result["type"] is FlowResultType.FORM and result["step_id"] == "panel"
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {CONF_CLOUD_PANEL_KEY: SERIAL_16}
         )
-        assert result["type"] is FlowResultType.ABORT
-        assert result["reason"] == "already_linked"
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert cloud_account(entry).data[CONF_CLOUD_PANEL_KEY] == SERIAL_16
 
 
 def test_only_a_local_panel_is_offered_an_account() -> None:
     assert SUBENTRY_CLOUD_ACCOUNT in SpanPanelConfigFlow.async_get_supported_subentry_types(
         _local_entry(linked=False)
     )
+    # One account per panel: a linked panel is not offered another.
+    assert not SpanPanelConfigFlow.async_get_supported_subentry_types(_local_entry())
     # A panel read through the cloud already is its account.
     assert not SpanPanelConfigFlow.async_get_supported_subentry_types(_entry(SERIAL_40, "MAIN 40"))
 
@@ -217,27 +262,6 @@ def test_the_linked_sign_in_stays_out_of_diagnostics() -> None:
     for key in (CONF_CLOUD_TOKENS, CONF_CLOUD_USER_ID, CONF_CLOUD_DEVICE_UUID):
         assert stored[key] == "**REDACTED**"
     assert stored[CONF_CLOUD_PANEL_KEY] == SERIAL_40
-
-
-async def test_the_wrong_panel_is_refused_while_linking(hass: HomeAssistant) -> None:
-    FakeStream.backends = {}
-    entry = _local_entry(linked=False)
-    entry.add_to_hass(hass)
-    discover, stream, tokens = _cloud()
-    with discover, stream, tokens, _running(_local_snapshot({"a": [15], "b": [20, 22]})):
-        result = await _choose_panel(hass, entry)
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {"base": "wrong_panel"}
-    assert cloud_account(entry) is None
-
-
-async def test_a_panel_that_is_not_running_is_not_linked_blind(hass: HomeAssistant) -> None:
-    entry = _local_entry(linked=False)
-    entry.add_to_hass(hass)
-    with _running(None):
-        result = await _choose_panel(hass, entry)
-    assert result["errors"] == {"base": "panel_not_loaded"}
-    assert cloud_account(entry) is None
 
 
 def _linked_with(breakers: list[dict]) -> MockConfigEntry:

@@ -1147,7 +1147,7 @@
         },
         "panel": {
           "title": "どのパネルですか？",
-          "description": "SPAN アカウント内で {panel} にあたるパネルを選択してください。リンクする前に、このパネルのブレーカー位置と照合します。",
+          "description": "SPAN アカウント内の複数のパネルが {panel} のブレーカーと一致します。該当するものを選択してください。",
           "data": {
             "cloud_panel_key": "SPANアカウント内のパネル"
           }
@@ -1155,13 +1155,15 @@
       },
       "error": {
         "invalid_auth": "認証が無効です",
-        "cannot_connect": "SPANのクラウドに接続できませんでした",
-        "wrong_panel": "その SPAN パネルにはこのパネルのブレーカーがありません。正しいパネルを選択してください。",
-        "panel_not_loaded": "このパネルは稼働していません。接続されてからアカウントをリンクしてください。"
+        "cannot_connect": "SPANのクラウドに接続できませんでした"
       },
       "abort": {
         "already_linked": "このパネルにはすでにSPANアカウントがあります。別のアカウントを連携するには、先に削除してください。",
-        "no_panels": "このSPANアカウントにはパネルがありません。"
+        "no_panels": "このSPANアカウントにはパネルがありません。",
+        "all_linked": "この SPAN アカウントのパネルはすべて、Home Assistant のパネルにリンク済みです。",
+        "no_matching_panel": "この SPAN アカウントには {panel} のブレーカーを持つパネルがありません。",
+        "panel_not_loaded": "このパネルは稼働していません。接続されてからアカウントをリンクしてください。",
+        "cannot_connect": "SPAN のクラウドに接続できませんでした"
       }
     }
   }

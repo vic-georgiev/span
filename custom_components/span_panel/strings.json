@@ -1139,7 +1139,7 @@
       "step": {
         "user": {
           "title": "Sign in to SPAN",
-          "description": "Link the SPAN account this panel belongs to. The panel keeps running locally; the account is only used when you rename a breaker or export the panel's history. The password is only used to sign in; Home Assistant keeps the tokens SPAN issues, not the password.",
+          "description": "Link the SPAN account this panel belongs to. The panel in the account is found automatically, by its breakers. The panel keeps running locally; the account is only used when you rename a breaker or export the panel's history. The password is only used to sign in; Home Assistant keeps the tokens SPAN issues, not the password.",
           "data": {
             "email": "Email",
             "password": "Password"
@@ -1147,7 +1147,7 @@
         },
         "panel": {
           "title": "Which panel is this?",
-          "description": "Choose the panel in your SPAN account that is {panel}. It is checked against this panel's breaker spaces before it is linked.",
+          "description": "More than one panel in your SPAN account has the breakers of {panel}. Choose the one it is.",
           "data": {
             "cloud_panel_key": "Panel in the SPAN account"
           }
@@ -1155,13 +1155,15 @@
       },
       "error": {
         "invalid_auth": "Invalid authentication",
-        "cannot_connect": "SPAN's cloud could not be reached",
-        "wrong_panel": "That SPAN panel does not have this panel's breakers: choose the panel that is this one.",
-        "panel_not_loaded": "This panel is not running. Wait until it is connected, then link the account."
+        "cannot_connect": "SPAN's cloud could not be reached"
       },
       "abort": {
         "already_linked": "This panel already has a SPAN account. Remove it first to link another.",
-        "no_panels": "This SPAN account has no panels."
+        "no_panels": "This SPAN account has no panels.",
+        "all_linked": "Every panel in this SPAN account is already linked to a panel in Home Assistant.",
+        "no_matching_panel": "No panel in this SPAN account has the breakers of {panel}.",
+        "panel_not_loaded": "This panel is not running. Wait until it is connected, then link the account.",
+        "cannot_connect": "SPAN's cloud could not be reached"
       }
     }
   }
