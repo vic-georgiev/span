@@ -25,6 +25,12 @@ from homeassistant.helpers.selector import (
 )
 import voluptuous as vol
 
+from custom_components.span_panel.connections import (
+    cloud_unique_id,
+    entry_serial,
+    is_cloud_entry,
+    serial_key,
+)
 from custom_components.span_panel.const import (
     API_VERSION_CLOUD,
     CONF_API_VERSION,
@@ -139,11 +145,18 @@ class CloudFlowSteps(_FlowBase):
     ) -> ConfigFlowResult:
         """Pick the panels to add. Each becomes its own entry."""
         assert self._cloud_panels is not None
-        configured = {entry.unique_id for entry in self.hass.config_entries.async_entries(DOMAIN)}
+        # Only another cloud entry makes a panel "configured" here: a local
+        # entry for the same panel is a separate connection and leaves the
+        # cloud one free to add (see `connections`).
+        configured = {
+            serial_key(entry_serial(entry))
+            for entry in self.hass.config_entries.async_entries(DOMAIN)
+            if is_cloud_entry(entry)
+        }
         available = {
             key: panel
             for key, panel in self._cloud_panels.items()
-            if panel.serial not in configured
+            if serial_key(panel.serial) not in configured
         }
         if not available:
             return self.async_abort(reason="already_configured")
@@ -185,7 +198,7 @@ class CloudFlowSteps(_FlowBase):
         title = panel_title(panel)
         return {
             "title": title,
-            "unique_id": panel.serial,
+            "unique_id": cloud_unique_id(panel.serial or panel.key),
             "data": {
                 CONF_API_VERSION: API_VERSION_CLOUD,
                 CONF_DEVICE_NAME: title,

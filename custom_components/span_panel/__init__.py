@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import logging
+from typing import Any
 
 from homeassistant.components.frontend import async_remove_panel as async_remove_panel
 from homeassistant.components.panel_custom import async_register_panel as async_register_panel
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_HOST, Platform
 from homeassistant.core import CALLBACK_TYPE, CoreState, HomeAssistant, callback
 from homeassistant.exceptions import (
@@ -66,6 +68,12 @@ from .config_flow_validation import (
     async_fetch_panel_ca,
     async_leaf_probe,
     panel_rest_transport,
+)
+from .connections import (
+    async_namespace_cloud_entries,
+    cloud_entry_for,
+    entry_serial,
+    local_owner,
 )
 from .const import (
     API_VERSION_CLOUD,
@@ -191,6 +199,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     _async_register_favorites_services(hass)
     _async_register_credential_services(hass)
     async_register_history_export(hass)
+
+    # Before any entry sets up, so a panel added locally never collides with
+    # the cloud entry it already has (see `connections`).
+    async_namespace_cloud_entries(hass)
 
     await async_apply_panel_registration(hass)
 
@@ -516,6 +528,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: SpanPanelConfigEntry) ->
             "This panel requires reauthentication. "
             "Please reauthenticate with your panel passphrase or proximity."
         )
+
+    # One panel, two connections: while the panel has an enabled local entry,
+    # the local connection owns its device and entities, and its cloud entry
+    # stands by with its settings intact (see `connections`).
+    if api_version == API_VERSION_CLOUD and local_owner(hass, entry_serial(entry)) is not None:
+        _LOGGER.info(
+            "SPAN cloud connection for %s is standing by: the panel's local connection owns it",
+            entry_serial(entry),
+        )
+        _cloud_standby(hass).add(entry.entry_id)
+        return True
 
     # Before the coordinator, because the coordinator can raise a notice as soon
     # as it starts streaming -- a panel that upgraded its firmware while Home
@@ -860,6 +883,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: SpanPanelConfigEntry) ->
 
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+        # A local connection that has just taken its panel tells the panel's
+        # cloud entry to step back, if that entry is running it.
+        if api_version != API_VERSION_CLOUD:
+            _async_reload_cloud_connection(hass, entry, standing_by=False)
+
         # After the forward, because it reports on what the platforms just built
         # -- and once, rather than from each platform's own call to `adoptable`.
         await async_notice_declined_extensions(
@@ -903,6 +931,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: SpanPanelConfigEntry) -
     """
     _LOGGER.debug("Unloading SPAN Panel integration")
 
+    # A cloud entry standing by set nothing up, so there is nothing to unload.
+    if entry.entry_id in _cloud_standby(hass):
+        _cloud_standby(hass).discard(entry.entry_id)
+        return True
+
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if not unload_ok:
         return False
@@ -913,7 +946,41 @@ async def async_unload_entry(hass: HomeAssistant, entry: SpanPanelConfigEntry) -
             runtime_data.coordinator.current_monitor.async_stop()
         await runtime_data.coordinator.async_shutdown()
 
+    # The local connection is going (disabled, removed or reloading), so a cloud
+    # entry standing by for the same panel looks again at whether to take it.
+    if entry.data.get(CONF_API_VERSION) != API_VERSION_CLOUD:
+        _async_reload_cloud_connection(hass, entry, standing_by=True)
+
     return True
+
+
+def _cloud_standby(hass: HomeAssistant) -> set[str]:
+    """Return the ids of the cloud entries standing by for a locally owned panel."""
+    domain_data: dict[str, Any] = hass.data.setdefault(DOMAIN, {})
+    standby: set[str] = domain_data.setdefault("cloud_standby", set())
+    return standby
+
+
+@callback
+def _async_reload_cloud_connection(
+    hass: HomeAssistant, local_entry: SpanPanelConfigEntry, *, standing_by: bool
+) -> None:
+    """Reload the panel's loaded cloud entry if it is in the other role.
+
+    `standing_by` names the role that should change: True after the local
+    connection goes (a standing-by cloud entry may now take the panel), False
+    after it comes (a running cloud entry must step back). Nothing happens while
+    Home Assistant stops, when the panel has no cloud entry, or when that entry
+    is not loaded.
+    """
+    if hass.is_stopping:
+        return
+    cloud = cloud_entry_for(hass, entry_serial(local_entry))
+    if cloud is None or cloud.state is not ConfigEntryState.LOADED:
+        return
+    if (cloud.entry_id in _cloud_standby(hass)) is not standing_by:
+        return
+    hass.config_entries.async_schedule_reload(cloud.entry_id)
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: SpanPanelConfigEntry) -> None:

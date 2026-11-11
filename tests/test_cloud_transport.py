@@ -73,6 +73,7 @@ from custom_components.span_panel.cloud.span_client.models import (
     PropertySpec,
     Reading,
 )
+from custom_components.span_panel.connections import cloud_unique_id
 from custom_components.span_panel.const import (
     API_VERSION_CLOUD,
     CONF_API_VERSION,
@@ -651,7 +652,10 @@ async def test_sign_in_adds_an_entry_per_panel_picked(hass: HomeAssistant) -> No
         await hass.async_block_till_done()
 
     entries = hass.config_entries.async_entries(DOMAIN)
-    assert {e.unique_id for e in entries} == {SERIAL_40, SERIAL_16}
+    assert {e.unique_id for e in entries} == {
+        cloud_unique_id(SERIAL_40),
+        cloud_unique_id(SERIAL_16),
+    }
     for entry in entries:
         assert entry.data[CONF_API_VERSION] == API_VERSION_CLOUD
         assert "password" not in entry.data
