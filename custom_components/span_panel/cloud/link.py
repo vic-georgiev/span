@@ -184,6 +184,9 @@ async def async_open_cloud_panel(
     )
     try:
         await client.connect()
+        # Opened on demand, so the circuits a rename or the history names may
+        # not have arrived yet; a stream left running would long have them.
+        await client.async_wait_for_circuits()
         panel = LinkedCloudPanel(client, local)
         await panel.async_match()
         yield panel

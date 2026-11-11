@@ -40,7 +40,15 @@ from custom_components.span_panel.diagnostics import TO_REDACT
 from custom_components.span_panel.websocket import _reserved_breakers
 
 from .factories import SpanCircuitSnapshotFactory, SpanPanelSnapshotFactory
-from .test_cloud_transport import SERIAL_16, SERIAL_40, SITE, TOKENS, FakeStream, _entry
+from .test_cloud_transport import (
+    SERIAL_16,
+    SERIAL_40,
+    SITE,
+    TOKENS,
+    FakeBackend,
+    FakeStream,
+    _entry,
+)
 
 LOCAL_SERIAL = "xg-test-40"
 
@@ -350,3 +358,32 @@ async def test_of_two_panels_with_one_layout_the_one_named_alike_is_linked(
         result = await _sign_in(hass, entry)
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert cloud_account(entry).data[CONF_CLOUD_PANEL_KEY] == SERIAL_16
+
+
+async def test_a_rename_waits_for_spans_circuits_after_the_telemetry(
+    hass: HomeAssistant,
+) -> None:
+    """Opened on demand, the stream describes the panel before its circuits.
+
+    The rename names a circuit, which the backend only knows once its subscribe
+    snapshot lands, seconds after the first telemetry on a real account. A link
+    that renamed on the telemetry alone found no circuit to rename.
+    """
+    FakeStream.backends = {}
+    late = FakeBackend(SERIAL_40)
+    late.circuits_late = True
+    FakeStream.backends[SERIAL_40] = late
+    discover, stream, tokens = _cloud()
+    with (
+        discover,
+        stream,
+        tokens,
+        patch.object(FakeStream, "panel_backend", lambda _self, *_args, **_kwargs: late),
+    ):
+        hass.loop.call_later(0.2, late.circuits_ready.set)
+        async with async_linked_cloud_panel(
+            hass, _local_entry(), _local_snapshot(SAME_PANEL)
+        ) as panel:
+            assert late.circuits_ready.is_set()
+            assert await panel.rename_circuit("circuit-1", "Pantry") == "Pantry"
+    assert late.renames == [("circuit-21", "Pantry")]

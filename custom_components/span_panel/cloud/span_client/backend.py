@@ -1353,6 +1353,11 @@ class CloudBackend:
         self._resolved_hardware_ids: list[str] = []
         # instance id -> circuit identity, from the subscribe snapshot.
         self._circuits: dict[int, CircuitInfo] = {}
+        # Set once the subscribe snapshot has described the circuits. Commands
+        # that name a circuit (a rename, a priority) and the history's circuit
+        # names need them; the telemetry stream that describes the panel's
+        # schema arrives separately and usually first.
+        self.circuits_ready = threading.Event()
         # Settings waiting for the panel to report them: (applied?, event).
         self._setting_waits: list[
             tuple[Callable[[dict[int, CircuitInfo]], bool], threading.Event]
@@ -1619,6 +1624,7 @@ class CloudBackend:
             for instance, info in circuits.items()
         )
         self._circuits = circuits
+        self.circuits_ready.set()
         if renamed:
             self._schema_sent = False
         for applied, event in list(self._setting_waits):

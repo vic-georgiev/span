@@ -143,6 +143,22 @@ class SpanCloudClient:
                 "no telemetry from SPAN's cloud within 90 seconds"
             ) from err
 
+    async def async_wait_for_circuits(self, timeout: float = 90) -> None:
+        """Wait until SPAN has described the panel's circuits, not just its telemetry.
+
+        `connect` returns on the first telemetry, which is enough to read the
+        panel. A command that names a circuit needs the circuits' identities,
+        which come from a separate subscription that can land seconds later; a
+        stream left running has had them for long, one opened on demand has not.
+        """
+        ready = await self._hass.async_add_executor_job(
+            self._feed.backend.circuits_ready.wait, timeout
+        )
+        if not ready:
+            raise SpanPanelConnectionError(
+                f"SPAN's cloud did not describe the circuits within {timeout:.0f} seconds"
+            )
+
     async def close(self) -> None:
         """Stop streaming and let go of the panel's share of the site stream."""
         if self._closed:

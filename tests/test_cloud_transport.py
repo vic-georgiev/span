@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+import threading
 import time
 from typing import Any
 from unittest.mock import patch
@@ -195,6 +196,10 @@ class FakeBackend:
         self.started = False
         self.stopped = False
         self.energy_polls = 0
+        # The real backend sets this when the subscribe snapshot lands, apart
+        # from the telemetry; `circuits_late` holds it back to show that.
+        self.circuits_ready = threading.Event()
+        self.circuits_late = False
 
     def start(self, on_schema, on_reading) -> None:
         """Describe the panel, then report its readings."""
@@ -204,6 +209,8 @@ class FakeBackend:
         on_schema(schema)
         for key, value in readings.items():
             on_reading(Reading(key=key, value=value, timestamp=0.0))
+        if not self.circuits_late:
+            self.circuits_ready.set()
 
     def stop(self, join_timeout: float = 10.0) -> None:
         """Record that the stream was stopped."""
