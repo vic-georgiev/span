@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from datetime import timedelta
 import logging
 from time import time as _epoch_time
-from typing import TYPE_CHECKING, Final, Protocol
+from typing import TYPE_CHECKING, Any, Final, Protocol
 
 if TYPE_CHECKING:
     from .current_monitor import CurrentMonitor
@@ -21,6 +21,7 @@ from homeassistant.exceptions import (
     HomeAssistantError,
 )
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from span_panel_api import SpanMqttClient, SpanPanelSnapshot
 from span_panel_api.exceptions import (
@@ -43,6 +44,7 @@ from .notices import async_raise, read_translations
 from .schema_repairs import async_sync_schema_issues
 from .schema_validation import SchemaFindings, evaluate_field_metadata
 from .sensor_definitions import sensor_descriptions_by_field_path
+from .timeline import CLOCK_SPAN, PowerTimeline, Timeline
 
 
 class EnergyOffsetSource(Protocol):
@@ -113,9 +115,31 @@ class SpanPanelCoordinator(DataUpdateCoordinator[SpanPanelSnapshot]):
         hass: HomeAssistant,
         client: SpanMqttClient,
         config_entry: SpanPanelConfigEntry,
+        *,
+        publish_interval: float = 0.0,
     ) -> None:
-        """Initialize the coordinator."""
+        """Initialize the coordinator.
+
+        `publish_interval` separates how often entities update from how often
+        the client delivers snapshots. A local panel is sampled more often than
+        its entities need, so its `timeline` stamps each figure closely; the
+        entities still see one snapshot per interval. Zero passes every
+        snapshot straight through, as a client that paces itself wants.
+        """
         self._client = client
+        self.timeline = PowerTimeline()
+        self._latest: SpanPanelSnapshot | None = None
+        self._publisher: Debouncer[Coroutine[Any, Any, None]] | None = (
+            Debouncer(
+                hass,
+                _LOGGER,
+                cooldown=publish_interval,
+                immediate=True,
+                function=self._publish_latest,
+            )
+            if publish_interval > 0
+            else None
+        )
         # Track last tick for visibility into cadence
         self._last_tick_epoch: float | None = None
         # Flag to track if a reload was requested
@@ -501,14 +525,40 @@ class SpanPanelCoordinator(DataUpdateCoordinator[SpanPanelSnapshot]):
 
     async def _on_snapshot_push(self, snapshot: SpanPanelSnapshot) -> None:
         """Handle a pushed snapshot from MQTT streaming."""
+        self.timeline.record(_epoch_time(), snapshot)
         self._mark_panel_online()
         self._check_capability_change(snapshot)
         self._check_settability_change(snapshot)
+        self._latest = snapshot
+        if self._publisher is None:
+            await self._publish_latest()
+        else:
+            await self._publisher.async_call()
+
+    async def _publish_latest(self) -> None:
+        """Hand the newest snapshot to the entities."""
+        snapshot = self._latest
+        if snapshot is None:
+            return
         self.async_set_updated_data(snapshot)
         await self._run_post_update_tasks(snapshot)
 
+    def recent_power(self, source: str, circuit_id: str | None = None) -> Timeline:
+        """Return one power figure's recent samples, on the best clock the transport has.
+
+        The cloud transport keeps SPAN's frame times; a local panel has only
+        this machine's, recorded on every sample.
+        """
+        recent = getattr(self._client, "recent_power", None)
+        if callable(recent):
+            samples = recent(source, circuit_id)
+            return Timeline(CLOCK_SPAN, samples if isinstance(samples, list) else [])
+        return self.timeline.recent(source, circuit_id)
+
     async def async_shutdown(self) -> None:
         """Shut down the coordinator and release resources."""
+        if self._publisher is not None:
+            self._publisher.async_shutdown()
         if self._unregister_connection is not None:
             self._unregister_connection()
             self._unregister_connection = None

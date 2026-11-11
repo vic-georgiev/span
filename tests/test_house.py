@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -32,6 +32,7 @@ from custom_components.span_panel.house import (
     house_power,
     roots,
 )
+from custom_components.span_panel.timeline import CLOCK_HOME_ASSISTANT, CLOCK_SPAN, Timeline
 
 MAIN_40 = "XC-TEST-40"
 MAIN_16 = "XC-TEST-16"
@@ -394,3 +395,47 @@ def test_no_gap_until_both_panels_have_reported(hass: HomeAssistant) -> None:
     sensor._fed_updated_at = 100.0
     with patch.object(sensor, "_check", return_value=FeedCheck(405.0, 400.0)):
         assert "readings_apart_s" not in sensor.extra_state_attributes
+
+
+def _feed_check_on(hass: HomeAssistant, upstream: Timeline, fed: Timeline) -> SpanFeedCheckSensor:
+    sensor = SpanFeedCheckSensor.__new__(SpanFeedCheckSensor)
+    sensor.hass = hass
+    sensor._feed = Feed(FEED_LUGS, MAIN_40)
+    sensor._upstream_coordinator = MagicMock(recent_power=MagicMock(return_value=upstream))
+    sensor.coordinator = MagicMock(recent_power=MagicMock(return_value=fed))
+    return sensor
+
+
+def test_two_local_panels_are_aligned_on_home_assistants_clock(hass: HomeAssistant) -> None:
+    """Both stamped here, a quarter second apart at most; a load change shows the lag."""
+    upstream = [(9.0 + i * 0.25, 400.0 if i < 4 else 1900.0) for i in range(8)]
+    fed = [(9.25 + i * 0.25, 405.0 if i < 4 else 1905.0) for i in range(8)]
+    sensor = _feed_check_on(
+        hass, Timeline(CLOCK_HOME_ASSISTANT, upstream), Timeline(CLOCK_HOME_ASSISTANT, fed)
+    )
+    attributes = sensor.extra_state_attributes
+    assert attributes["aligned"] is True
+    assert attributes["clock"] == CLOCK_HOME_ASSISTANT
+    assert attributes["sample_interval_s"] == 0.25
+    assert attributes["step_lag_s"] == 0.25
+    assert attributes["step_count"] == 1
+    assert "house_clock_lag_s" not in attributes
+    assert sensor.native_value == -5.0
+
+
+def test_panels_on_different_clocks_are_never_paired(hass: HomeAssistant) -> None:
+    """A cloud panel's SPAN frame times and a local panel's stamps are not one timeline."""
+    samples = [(9.0 + i * 0.25, 400.0) for i in range(8)]
+    sensor = _feed_check_on(
+        hass, Timeline(CLOCK_SPAN, samples), Timeline(CLOCK_HOME_ASSISTANT, samples)
+    )
+    with patch(
+        "custom_components.span_panel.house.loaded_panels",
+        return_value={
+            MAIN_40: LoadedPanel(MAIN_40, "e", "40", OWN_SUPPLY, _panel(MAIN_40, 0, 400))
+        },
+    ):
+        sensor.coordinator.data = _panel(MAIN_16, 405.0)
+        attributes = sensor.extra_state_attributes
+    assert attributes["aligned"] is False
+    assert "clock" not in attributes

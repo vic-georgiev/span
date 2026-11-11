@@ -26,6 +26,8 @@ from __future__ import annotations
 from bisect import bisect_left
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+import itertools
+from statistics import median
 import time
 from typing import Any, ClassVar
 
@@ -38,6 +40,7 @@ from span_panel_api import SpanPanelSnapshot
 from .const import DOMAIN
 from .coordinator import SpanPanelCoordinator
 from .entity import SpanPanelEntity
+from .timeline import CLOCK_SPAN, Timeline
 
 CONF_FEED = "feed"
 
@@ -171,7 +174,7 @@ Series = Sequence[tuple[float, float]]
 
 @dataclass(frozen=True)
 class AlignedFeedCheck(FeedCheck):
-    """A feed check taken at one instant of SPAN's own clock on both panels."""
+    """A feed check taken at one instant of a clock both panels' samples are on."""
 
     at: float = 0.0
     average_difference_w: float | None = None
@@ -204,7 +207,7 @@ def _upstream_at(series: Series, when: float) -> float | None:
 
 
 def aligned_feed_check(upstream: Series, fed: Series) -> AlignedFeedCheck | None:
-    """Compare the two meters at the same instants, by the frame times SPAN stamps.
+    """Compare the two meters at the same instants of the clock both series are on.
 
     The two panels stream separately, so their latest readings are from
     different moments, and a load that changes between them shows as a jump
@@ -235,6 +238,56 @@ def aligned_feed_check(upstream: Series, fed: Series) -> AlignedFeedCheck | None
         average_difference_w=sum(recent) / len(recent),
         pairs=len(recent),
     )
+
+
+def sample_interval(series: Series) -> float | None:
+    """Return the median time between one series' samples.
+
+    On this machine's clock a figure is stamped when the sample holding it is
+    taken, so this is how much older than its stamp a figure can be.
+    """
+    gaps = [b[0] - a[0] for a, b in itertools.pairwise(series)]
+    return median(gaps) if gaps else None
+
+
+def _steps(series: Series) -> list[tuple[float, float]]:
+    """Return each change of level as `(time first seen, size)`."""
+    return [
+        (t1, v1 - v0)
+        for (t0, v0), (t1, v1) in itertools.pairwise(series)
+        if t1 - t0 <= MAX_SAMPLE_GAP_S and not _steady(v0, v1)
+    ]
+
+
+@dataclass(frozen=True)
+class StepLag:
+    """How much later the fed panel shows a load change than the upstream does."""
+
+    lag_s: float
+    steps: int
+
+
+def step_lag(upstream: Series, fed: Series) -> StepLag | None:
+    """Measure how far apart the two panels' readings are, from load changes both see.
+
+    A load that switches steps both meters on the feed by the same amount, at
+    the same moment. Each step the fed panel shows is matched with the
+    upstream's step of the same size nearest it in time, and the time between
+    the first samples showing the new level is how far apart the two panels'
+    figures arrive on the shared clock: positive when the fed panel is later.
+    The median over the window is the lag; None until a step is seen on both.
+    """
+    upstream_steps = _steps(upstream)
+    lags: list[float] = []
+    for when, change in _steps(fed):
+        matches = [
+            at
+            for at, size in upstream_steps
+            if abs(at - when) <= MAX_SAMPLE_GAP_S and _steady(size, change)
+        ]
+        if matches:
+            lags.append(when - min(matches, key=lambda at: abs(at - when)))
+    return StepLag(lag_s=median(lags), steps=len(lags)) if lags else None
 
 
 def house_power(
@@ -339,7 +392,9 @@ class SpanFeedCheckSensor(SpanPanelEntity, SensorEntity):
     # apart the two figures were taken, where no clock aligns them.
     _fed_updated_at: float | None = None
     _upstream_updated_at: float | None = None
-    _unrecorded_attributes = frozenset({"readings_apart_s"})
+    _unrecorded_attributes = frozenset(
+        {"readings_apart_s", "sample_interval_s", "step_lag_s", "step_count", "aligned_at"}
+    )
 
     async def async_added_to_hass(self) -> None:
         """Also follow the upstream panel, so either side moving updates the check."""
@@ -386,15 +441,23 @@ class SpanFeedCheckSensor(SpanPanelEntity, SensorEntity):
             self._feed, upstream.snapshot if upstream else None, self.coordinator.data
         )
 
-    def _aligned_check(self) -> AlignedFeedCheck | None:
-        """Return the check at one instant, where both panels' transports keep their samples."""
-        upstream = _recent_power(
-            self._upstream_coordinator, _upstream_source(self._feed), self._feed.circuit
-        )
-        fed = _recent_power(self.coordinator, "main_feed", None)
-        if not upstream or not fed:
+    def _timelines(self) -> tuple[Timeline, Timeline] | None:
+        """Return both sides' recent samples, where they are on one clock."""
+        upstream_coordinator = self._upstream_coordinator
+        if upstream_coordinator is None:
             return None
-        return aligned_feed_check(upstream, fed)
+        upstream = upstream_coordinator.recent_power(
+            _upstream_source(self._feed), self._feed.circuit
+        )
+        fed = self.coordinator.recent_power("main_feed")
+        if upstream.clock != fed.clock or not upstream.samples or not fed.samples:
+            return None
+        return upstream, fed
+
+    def _aligned_check(self) -> AlignedFeedCheck | None:
+        """Return the check at one instant of the clock both panels' samples are on."""
+        timelines = self._timelines()
+        return aligned_feed_check(timelines[0].samples, timelines[1].samples) if timelines else None
 
     @property
     def native_value(self) -> float | None:
@@ -416,10 +479,20 @@ class SpanFeedCheckSensor(SpanPanelEntity, SensorEntity):
             attributes["upstream_w"] = round(check.expected_w, 1)
             attributes["this_panel_w"] = round(check.measured_w, 1)
         attributes["aligned"] = isinstance(check, AlignedFeedCheck)
-        lag = _house_clock_lag(self.hass) if isinstance(check, AlignedFeedCheck) else None
+        timelines = self._timelines() if isinstance(check, AlignedFeedCheck) else None
+        if timelines is not None:
+            attributes.update(_sync_attributes(*timelines))
+        lag = (
+            _house_clock_lag(self.hass) if timelines and timelines[0].clock == CLOCK_SPAN else None
+        )
         if lag is not None:
             attributes["house_clock_lag_s"] = round(lag, 2)
-        elif check is not None and self._fed_updated_at and self._upstream_updated_at:
+        elif (
+            timelines is None
+            and check is not None
+            and self._fed_updated_at
+            and self._upstream_updated_at
+        ):
             # Unaligned: each panel's latest figure, taken this far apart. Over
             # SPAN API each panel publishes on its own snapshot timer.
             attributes["readings_apart_s"] = round(
@@ -447,25 +520,25 @@ def _house_clock_lag(hass: HomeAssistant) -> float | None:
     return time.time() - now if isinstance(now, float) else None
 
 
+def _sync_attributes(upstream: Timeline, fed: Timeline) -> dict[str, Any]:
+    """Say which clock aligned the two panels, how finely, and the lag measured on it."""
+    attributes: dict[str, Any] = {"clock": fed.clock}
+    intervals = [
+        interval
+        for interval in (sample_interval(upstream.samples), sample_interval(fed.samples))
+        if interval is not None
+    ]
+    if intervals:
+        attributes["sample_interval_s"] = round(max(intervals), 2)
+    lag = step_lag(upstream.samples, fed.samples)
+    if lag is not None:
+        attributes["step_lag_s"] = round(lag.lag_s, 2)
+        attributes["step_count"] = lag.steps
+    return attributes
+
+
 def _upstream_source(feed: Feed) -> str:
     return "feedthrough" if feed.type == FEED_LUGS else "circuit"
-
-
-def _recent_power(
-    coordinator: SpanPanelCoordinator | None, source: str, circuit_id: str | None
-) -> list[tuple[float, float]]:
-    """Return a panel's recent samples of one power figure, where its transport keeps them.
-
-    Only the cloud transport does today; any other answers nothing, and the
-    check falls back to comparing the two panels' latest snapshots.
-    """
-    if coordinator is None:
-        return []
-    recent = getattr(coordinator.client, "recent_power", None)
-    if not callable(recent):
-        return []
-    samples = recent(source, circuit_id)
-    return samples if isinstance(samples, list) else []
 
 
 def create_feed_check_sensors(

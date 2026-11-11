@@ -126,7 +126,9 @@ async def test_async_setup_entry_v2_success_sets_runtime_data_and_title(
     mock_ws.assert_called_once_with(hass)
     mock_client_cls.assert_called_once()
     client.connect.assert_awaited_once()
-    mock_coordinator_cls.assert_called_once_with(hass, client, entry)
+    # Sampled every quarter second for the power timeline; entities paced to the default 5 s.
+    mock_coordinator_cls.assert_called_once_with(hass, client, entry, publish_interval=5.0)
+    assert mock_client_cls.call_args.kwargs["snapshot_interval"] == 0.25
     coordinator.async_config_entry_first_refresh.assert_awaited_once()
     coordinator.async_setup_streaming.assert_awaited_once()
     mock_ensure_device.assert_awaited_once_with(hass, entry, snapshot, "SPAN Panel")

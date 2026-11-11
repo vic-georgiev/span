@@ -146,6 +146,7 @@ from .services import (  # noqa: F401
     _build_set_mains_threshold_schema,
     rotation_in_progress,
 )
+from .timeline import SAMPLE_INTERVAL_S
 from .util import snapshot_to_device_info
 from .websocket import async_register_commands
 
@@ -619,14 +620,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: SpanPanelConfigEntry) ->
                 ca_pem=ca_pem,
             )
 
-            snapshot_interval = entry.options.get(
-                SNAPSHOT_UPDATE_INTERVAL, DEFAULT_SNAPSHOT_INTERVAL
+            # Sampled finer than the entities update, so the power timeline
+            # stamps each figure closely; the coordinator paces the entities
+            # back to the configured interval. See `timeline`.
+            publish_interval = float(
+                entry.options.get(SNAPSHOT_UPDATE_INTERVAL, DEFAULT_SNAPSHOT_INTERVAL)
             )
             client = SpanMqttClient(
                 host,
                 serial_number,
                 broker_config,
-                snapshot_interval=snapshot_interval,
+                snapshot_interval=min(publish_interval, SAMPLE_INTERVAL_S),
                 # Both ports, because the client runs two transports with
                 # opposite security properties. The plaintext port carries the
                 # bridge's CA fetches, which never follow the pin — they read
@@ -791,7 +795,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: SpanPanelConfigEntry) ->
             client.set_control_interceptor(ControlGate(hass, entry, control_policy, control_lock))
             entry.async_on_unload(lambda: client.set_control_interceptor(None))
 
-            coordinator = SpanPanelCoordinator(hass, client, entry)
+            coordinator = SpanPanelCoordinator(
+                hass,
+                client,
+                entry,
+                publish_interval=publish_interval if publish_interval > SAMPLE_INTERVAL_S else 0.0,
+            )
             await coordinator.async_config_entry_first_refresh()
 
             # Before streaming starts and before any platform is forwarded, so a
