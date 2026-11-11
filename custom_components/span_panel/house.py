@@ -335,6 +335,11 @@ class SpanFeedCheckSensor(SpanPanelEntity, SensorEntity):
 
     _upstream_coordinator: SpanPanelCoordinator | None = None
     _unsub_upstream: Callable[[], None] | None = None
+    # When each side last updated, on this machine's monotonic clock: how far
+    # apart the two figures were taken, where no clock aligns them.
+    _fed_updated_at: float | None = None
+    _upstream_updated_at: float | None = None
+    _unrecorded_attributes = frozenset({"readings_apart_s"})
 
     async def async_added_to_hass(self) -> None:
         """Also follow the upstream panel, so either side moving updates the check."""
@@ -344,8 +349,14 @@ class SpanFeedCheckSensor(SpanPanelEntity, SensorEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
+        self._fed_updated_at = time.monotonic()
         self._follow_upstream()
         super()._handle_coordinator_update()
+
+    @callback
+    def _handle_upstream_update(self) -> None:
+        self._upstream_updated_at = time.monotonic()
+        self.async_write_ha_state()
 
     @callback
     def _follow_upstream(self) -> None:
@@ -356,7 +367,7 @@ class SpanFeedCheckSensor(SpanPanelEntity, SensorEntity):
         self._stop_following()
         self._upstream_coordinator = upstream
         if upstream is not None:
-            self._unsub_upstream = upstream.async_add_listener(self.async_write_ha_state)
+            self._unsub_upstream = upstream.async_add_listener(self._handle_upstream_update)
 
     @callback
     def _stop_following(self) -> None:
@@ -364,6 +375,7 @@ class SpanFeedCheckSensor(SpanPanelEntity, SensorEntity):
             self._unsub_upstream()
         self._unsub_upstream = None
         self._upstream_coordinator = None
+        self._upstream_updated_at = None
 
     def _check(self) -> FeedCheck | None:
         aligned = self._aligned_check()
@@ -404,9 +416,15 @@ class SpanFeedCheckSensor(SpanPanelEntity, SensorEntity):
             attributes["upstream_w"] = round(check.expected_w, 1)
             attributes["this_panel_w"] = round(check.measured_w, 1)
         attributes["aligned"] = isinstance(check, AlignedFeedCheck)
-        lag = _house_clock_lag(self.hass)
+        lag = _house_clock_lag(self.hass) if isinstance(check, AlignedFeedCheck) else None
         if lag is not None:
             attributes["house_clock_lag_s"] = round(lag, 2)
+        elif check is not None and self._fed_updated_at and self._upstream_updated_at:
+            # Unaligned: each panel's latest figure, taken this far apart. Over
+            # SPAN API each panel publishes on its own snapshot timer.
+            attributes["readings_apart_s"] = round(
+                abs(self._fed_updated_at - self._upstream_updated_at), 1
+            )
         if isinstance(check, AlignedFeedCheck):
             attributes["aligned_at"] = dt_util.utc_from_timestamp(check.at).isoformat()
             if check.average_difference_w is not None:

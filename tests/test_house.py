@@ -20,7 +20,9 @@ from custom_components.span_panel.house import (
     FEED_LUGS,
     OWN_SUPPLY,
     Feed,
+    FeedCheck,
     LoadedPanel,
+    SpanFeedCheckSensor,
     aligned_feed_check,
     children,
     effective_feeds,
@@ -366,3 +368,29 @@ def test_a_root_panel_fed_through_its_battery_names_it() -> None:
     assert _supply(replace(fed_by_battery, lugs_at_service_entrance=None)) is None
     assert _supply(replace(fed_by_battery, battery=SpanBatterySnapshot(present=False))) is None
     assert _supply(None) is None
+
+
+def test_an_unaligned_check_says_how_far_apart_the_readings_were(
+    hass: HomeAssistant,
+) -> None:
+    """Over SPAN API each panel publishes on its own timer; the check says the gap."""
+    sensor = SpanFeedCheckSensor.__new__(SpanFeedCheckSensor)
+    sensor.hass = hass
+    sensor._feed = Feed(FEED_LUGS, MAIN_40)
+    sensor._fed_updated_at = 100.0
+    sensor._upstream_updated_at = 103.25
+    with patch.object(sensor, "_check", return_value=FeedCheck(405.0, 400.0)):
+        attributes = sensor.extra_state_attributes
+    assert attributes["aligned"] is False
+    assert attributes["readings_apart_s"] == 3.2
+    assert "house_clock_lag_s" not in attributes
+    assert "readings_apart_s" in SpanFeedCheckSensor._unrecorded_attributes
+
+
+def test_no_gap_until_both_panels_have_reported(hass: HomeAssistant) -> None:
+    sensor = SpanFeedCheckSensor.__new__(SpanFeedCheckSensor)
+    sensor.hass = hass
+    sensor._feed = Feed(FEED_LUGS, MAIN_40)
+    sensor._fed_updated_at = 100.0
+    with patch.object(sensor, "_check", return_value=FeedCheck(405.0, 400.0)):
+        assert "readings_apart_s" not in sensor.extra_state_attributes
