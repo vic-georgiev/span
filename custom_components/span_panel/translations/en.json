@@ -606,7 +606,7 @@
       "message": "Hardware version {version} with an unknown model has not been validated with this release."
     },
     "history_no_cloud_panels": {
-      "message": "No SPAN panel connected through SPAN's cloud is loaded. History export needs the cloud connection."
+      "message": "No SPAN panel connected through SPAN's cloud, or with a SPAN account linked, is loaded. History export needs one of the two."
     },
     "history_bad_range": {
       "message": "The end of the range must come after its start."
@@ -616,6 +616,12 @@
     },
     "history_fetch_failed": {
       "message": "SPAN's history for {panel} could not be read: {reason}"
+    },
+    "cloud_panel_mismatch": {
+      "message": "The linked SPAN account's panel ({panel}) is not this panel: their breaker spaces differ. Remove the SPAN account from this panel and add the right one."
+    },
+    "cloud_account_missing": {
+      "message": "This panel has no SPAN account linked."
     }
   },
   "options": {
@@ -1069,6 +1075,39 @@
     "cloud_fields_unavailable": {
       "title": "Not available through SPAN's cloud",
       "description": "The SPAN cloud connection does not provide these to Home Assistant: {fields}. Entities affected: {count} (for example: {examples}). They stay unavailable instead of showing made-up values. This is a limit of the unofficial cloud connection, not a fault in your panel."
+    }
+  },
+  "config_subentries": {
+    "cloud_account": {
+      "initiate_flow": {
+        "user": "Add SPAN account"
+      },
+      "entry_type": "SPAN account",
+      "step": {
+        "user": {
+          "title": "Sign in to SPAN",
+          "description": "Link the SPAN account this panel belongs to. The panel keeps running locally; the account is only used when you rename a breaker or export the panel's history. The password is only used to sign in; Home Assistant keeps the tokens SPAN issues, not the password.",
+          "data": {
+            "email": "Email",
+            "password": "Password"
+          }
+        },
+        "panel": {
+          "title": "Which panel is this?",
+          "description": "Choose the panel in your SPAN account that is {panel}. It is checked against this panel's breaker spaces the first time it is used.",
+          "data": {
+            "cloud_panel_key": "Panel in the SPAN account"
+          }
+        }
+      },
+      "error": {
+        "invalid_auth": "Invalid authentication",
+        "cannot_connect": "SPAN's cloud could not be reached"
+      },
+      "abort": {
+        "already_linked": "This panel already has a SPAN account. Remove it first to link another.",
+        "no_panels": "This SPAN account has no panels."
+      }
     }
   }
 }

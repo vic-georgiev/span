@@ -606,7 +606,7 @@
       "message": "La version matérielle {version} avec un modèle inconnu n'a pas été validée avec cette version de l'intégration."
     },
     "history_no_cloud_panels": {
-      "message": "Aucun panneau SPAN connecté par le cloud de SPAN n'est chargé. L'export de l'historique nécessite la connexion cloud."
+      "message": "Aucun panneau SPAN connecté via le cloud de SPAN, ni associé à un compte SPAN, n'est chargé. L'export de l'historique nécessite l'un des deux."
     },
     "history_bad_range": {
       "message": "La fin de la période doit être postérieure à son début."
@@ -616,6 +616,12 @@
     },
     "history_fetch_failed": {
       "message": "L'historique SPAN de {panel} n'a pas pu être lu : {reason}"
+    },
+    "cloud_panel_mismatch": {
+      "message": "Le panneau du compte SPAN associé ({panel}) n'est pas ce panneau : les emplacements de leurs disjoncteurs diffèrent. Supprimez le compte SPAN de ce panneau et ajoutez le bon."
+    },
+    "cloud_account_missing": {
+      "message": "Aucun compte SPAN n'est associé à ce panneau."
     }
   },
   "options": {
@@ -1069,6 +1075,39 @@
     "cloud_fields_unavailable": {
       "title": "Non disponible via le cloud SPAN",
       "description": "La connexion au cloud SPAN ne fournit pas ces données à Home Assistant : {fields}. Entités concernées : {count} (par exemple : {examples}). Elles restent indisponibles au lieu d'afficher des valeurs inventées. C'est une limite de la connexion cloud non officielle, pas un défaut de votre panneau."
+    }
+  },
+  "config_subentries": {
+    "cloud_account": {
+      "initiate_flow": {
+        "user": "Ajouter un compte SPAN"
+      },
+      "entry_type": "Compte SPAN",
+      "step": {
+        "user": {
+          "title": "Se connecter à SPAN",
+          "description": "Associez le compte SPAN auquel ce panneau appartient. Le panneau continue de fonctionner en local ; le compte ne sert que lorsque vous renommez un disjoncteur ou exportez l'historique du panneau. Le mot de passe ne sert qu'à la connexion ; Home Assistant conserve les jetons émis par SPAN, pas le mot de passe.",
+          "data": {
+            "email": "E-mail",
+            "password": "Mot de passe"
+          }
+        },
+        "panel": {
+          "title": "De quel panneau s'agit-il ?",
+          "description": "Choisissez dans votre compte SPAN le panneau qui correspond à {panel}. Il est vérifié avec les emplacements des disjoncteurs de ce panneau à la première utilisation.",
+          "data": {
+            "cloud_panel_key": "Panneau dans le compte SPAN"
+          }
+        }
+      },
+      "error": {
+        "invalid_auth": "Authentification invalide",
+        "cannot_connect": "Impossible de joindre le cloud de SPAN"
+      },
+      "abort": {
+        "already_linked": "Ce panneau a déjà un compte SPAN. Supprimez-le d'abord pour en associer un autre.",
+        "no_panels": "Ce compte SPAN ne contient aucun panneau."
+      }
     }
   }
 }

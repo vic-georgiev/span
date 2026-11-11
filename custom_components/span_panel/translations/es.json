@@ -606,7 +606,7 @@
       "message": "La versión de hardware {version} con un modelo desconocido no ha sido validada con esta versión de la integración."
     },
     "history_no_cloud_panels": {
-      "message": "No hay ningún panel SPAN conectado mediante la nube de SPAN. Exportar el historial requiere la conexión en la nube."
+      "message": "No hay cargado ningún panel SPAN conectado a través de la nube de SPAN ni con una cuenta de SPAN vinculada. La exportación del historial necesita una de las dos cosas."
     },
     "history_bad_range": {
       "message": "El fin del intervalo debe ser posterior a su inicio."
@@ -616,6 +616,12 @@
     },
     "history_fetch_failed": {
       "message": "No se pudo leer el historial de SPAN de {panel}: {reason}"
+    },
+    "cloud_panel_mismatch": {
+      "message": "El panel de la cuenta de SPAN vinculada ({panel}) no es este panel: los espacios de sus interruptores no coinciden. Quita la cuenta de SPAN de este panel y añade la correcta."
+    },
+    "cloud_account_missing": {
+      "message": "Este panel no tiene ninguna cuenta de SPAN vinculada."
     }
   },
   "options": {
@@ -1069,6 +1075,39 @@
     "cloud_fields_unavailable": {
       "title": "No disponible a través de la nube de SPAN",
       "description": "La conexión con la nube de SPAN no proporciona estos datos a Home Assistant: {fields}. Entidades afectadas: {count} (por ejemplo: {examples}). Siguen no disponibles en lugar de mostrar valores inventados. Es un límite de la conexión no oficial con la nube, no una falla de tu panel."
+    }
+  },
+  "config_subentries": {
+    "cloud_account": {
+      "initiate_flow": {
+        "user": "Añadir cuenta de SPAN"
+      },
+      "entry_type": "Cuenta de SPAN",
+      "step": {
+        "user": {
+          "title": "Iniciar sesión en SPAN",
+          "description": "Vincula la cuenta de SPAN a la que pertenece este panel. El panel sigue funcionando en local; la cuenta solo se usa cuando cambias el nombre de un interruptor o exportas el historial del panel. La contraseña solo se usa para iniciar sesión; Home Assistant guarda los tokens que emite SPAN, no la contraseña.",
+          "data": {
+            "email": "Correo electrónico",
+            "password": "Contraseña"
+          }
+        },
+        "panel": {
+          "title": "¿Qué panel es este?",
+          "description": "Elige el panel de tu cuenta de SPAN que corresponde a {panel}. Se comprueba con los espacios de los interruptores de este panel la primera vez que se usa.",
+          "data": {
+            "cloud_panel_key": "Panel en la cuenta de SPAN"
+          }
+        }
+      },
+      "error": {
+        "invalid_auth": "Autenticación no válida",
+        "cannot_connect": "No se pudo conectar con la nube de SPAN"
+      },
+      "abort": {
+        "already_linked": "Este panel ya tiene una cuenta de SPAN. Quítala primero para vincular otra.",
+        "no_panels": "Esta cuenta de SPAN no tiene paneles."
+      }
     }
   }
 }

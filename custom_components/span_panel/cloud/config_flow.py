@@ -13,8 +13,9 @@ import logging
 from typing import TYPE_CHECKING, Any
 import uuid
 
-from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.config_entries import ConfigFlowResult, ConfigSubentryFlow, SubentryFlowResult
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.selector import (
     SelectOptionDict,
     SelectSelector,
@@ -45,6 +46,8 @@ from custom_components.span_panel.options import (
     ENERGY_DISPLAY_PRECISION,
     POWER_DISPLAY_PRECISION,
 )
+
+from .link import cloud_account
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigFlow
@@ -90,6 +93,24 @@ def _choices(sites: list[SiteInfo]) -> dict[str, PanelInfo]:
     return {panel.key: panel for site in sites for panel in site_choices(site) if panel.serial}
 
 
+async def _async_sign_in(
+    hass: HomeAssistant, email: str, password: str
+) -> tuple[dict[str, Any], str, dict[str, PanelInfo]] | str:
+    """Sign in and list the account's panels, or name the form error to show."""
+    from .span_client import cloud_auth  # noqa: PLC0415
+
+    try:
+        tokens, user_id, sites = await hass.async_add_executor_job(
+            _sign_in, email.strip(), password
+        )
+    except cloud_auth.CloudCredentialsRejected:
+        return "invalid_auth"
+    except Exception:  # noqa: BLE001 — shown as a form error, logged for the curious
+        _LOGGER.exception("SPAN cloud sign-in failed")
+        return "cannot_connect"
+    return tokens, user_id, _choices(sites)
+
+
 def panel_title(panel: PanelInfo) -> str:
     """Name a panel the way its device will be named."""
     return f"SPAN {panel.model} {panel.serial}"
@@ -106,21 +127,15 @@ class CloudFlowSteps(_FlowBase):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Sign in to the SPAN account the panels belong to."""
-        from .span_client import cloud_auth  # noqa: PLC0415
-
         errors: dict[str, str] = {}
         if user_input is not None:
-            try:
-                tokens, user_id, sites = await self.hass.async_add_executor_job(
-                    _sign_in, user_input[CONF_EMAIL].strip(), user_input[CONF_PASSWORD]
-                )
-            except cloud_auth.CloudCredentialsRejected:
-                errors["base"] = "invalid_auth"
-            except Exception:  # noqa: BLE001 — shown as a form error, logged for the curious
-                _LOGGER.exception("SPAN cloud sign-in failed")
-                errors["base"] = "cannot_connect"
+            signed_in = await _async_sign_in(
+                self.hass, user_input[CONF_EMAIL], user_input[CONF_PASSWORD]
+            )
+            if isinstance(signed_in, str):
+                errors["base"] = signed_in
             else:
-                panels = _choices(sites)
+                tokens, user_id, panels = signed_in
                 if not panels:
                     return self.async_abort(reason="no_devices_found")
                 self._cloud_tokens, self._cloud_user_id, self._cloud_panels = (
@@ -210,4 +225,69 @@ class CloudFlowSteps(_FlowBase):
         self._abort_if_unique_id_configured()
         return self.async_create_entry(
             title=spec["title"], data=spec["data"], options=spec["options"]
+        )
+
+
+class CloudAccountSubentryFlow(ConfigSubentryFlow):
+    """Link a SPAN account to a panel read locally (see `link`).
+
+    Sign in, then say which of the account's panels this one is. Only the tokens
+    SPAN issues are kept. The link is checked against the panel's breaker spaces
+    the first time it is used, so a wrong pick is refused there, not acted on.
+    """
+
+    _tokens: dict[str, Any]
+    _user_id: str
+    _panels: dict[str, PanelInfo]
+
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
+        """Sign in to the SPAN account this panel belongs to."""
+        if cloud_account(self._get_entry()) is not None:
+            return self.async_abort(reason="already_linked")
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            signed_in = await _async_sign_in(
+                self.hass, user_input[CONF_EMAIL], user_input[CONF_PASSWORD]
+            )
+            if isinstance(signed_in, str):
+                errors["base"] = signed_in
+            else:
+                self._tokens, self._user_id, self._panels = signed_in
+                if not self._panels:
+                    return self.async_abort(reason="no_panels")
+                return await self.async_step_panel()
+        return self.async_show_form(step_id="user", data_schema=CLOUD_LOGIN_SCHEMA, errors=errors)
+
+    async def async_step_panel(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Say which of the account's panels this entry's panel is."""
+        if user_input is None:
+            options = [
+                SelectOptionDict(value=key, label=panel_title(panel).removeprefix("SPAN "))
+                for key, panel in self._panels.items()
+            ]
+            schema = vol.Schema(
+                {
+                    vol.Required(CONF_CLOUD_PANEL_KEY): SelectSelector(
+                        SelectSelectorConfig(options=options)
+                    )
+                }
+            )
+            return self.async_show_form(
+                step_id="panel",
+                data_schema=schema,
+                description_placeholders={"panel": self._get_entry().title},
+            )
+        panel = self._panels[user_input[CONF_CLOUD_PANEL_KEY]]
+        return self.async_create_entry(
+            title=panel_title(panel).removeprefix("SPAN "),
+            data={
+                CONF_CLOUD_TOKENS: self._tokens,
+                CONF_CLOUD_USER_ID: self._user_id,
+                CONF_CLOUD_DEVICE_UUID: str(uuid.uuid4()).upper(),
+                CONF_CLOUD_PANEL_KEY: panel.key,
+                CONF_CLOUD_MODEL: panel.model,
+            },
+            unique_id=panel.key,
         )

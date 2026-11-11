@@ -606,7 +606,7 @@
       "message": "A versão de hardware {version} com um modelo desconhecido não foi validada com esta versão da integração."
     },
     "history_no_cloud_panels": {
-      "message": "Nenhum painel SPAN ligado pela nuvem da SPAN está carregado. A exportação do histórico requer a ligação à nuvem."
+      "message": "Não está carregado nenhum painel SPAN ligado através da nuvem da SPAN nem com uma conta SPAN associada. A exportação do histórico precisa de um dos dois."
     },
     "history_bad_range": {
       "message": "O fim do intervalo tem de ser posterior ao início."
@@ -616,6 +616,12 @@
     },
     "history_fetch_failed": {
       "message": "Não foi possível ler o histórico da SPAN de {panel}: {reason}"
+    },
+    "cloud_panel_mismatch": {
+      "message": "O painel da conta SPAN associada ({panel}) não é este painel: os espaços dos disjuntores diferem. Remova a conta SPAN deste painel e adicione a correta."
+    },
+    "cloud_account_missing": {
+      "message": "Este painel não tem nenhuma conta SPAN associada."
     }
   },
   "options": {
@@ -1069,6 +1075,39 @@
     "cloud_fields_unavailable": {
       "title": "Não disponível pela nuvem da SPAN",
       "description": "A conexão com a nuvem da SPAN não fornece estes dados ao Home Assistant: {fields}. Entidades afetadas: {count} (por exemplo: {examples}). Elas ficam indisponíveis em vez de mostrar valores inventados. É um limite da conexão não oficial com a nuvem, não um defeito do seu painel."
+    }
+  },
+  "config_subentries": {
+    "cloud_account": {
+      "initiate_flow": {
+        "user": "Adicionar conta SPAN"
+      },
+      "entry_type": "Conta SPAN",
+      "step": {
+        "user": {
+          "title": "Iniciar sessão na SPAN",
+          "description": "Associe a conta SPAN a que este painel pertence. O painel continua a funcionar localmente; a conta só é usada quando muda o nome de um disjuntor ou exporta o histórico do painel. A palavra-passe só é usada para iniciar sessão; o Home Assistant guarda os tokens emitidos pela SPAN, não a palavra-passe.",
+          "data": {
+            "email": "E-mail",
+            "password": "Palavra-passe"
+          }
+        },
+        "panel": {
+          "title": "Que painel é este?",
+          "description": "Escolha na sua conta SPAN o painel que corresponde a {panel}. É verificado com os espaços dos disjuntores deste painel na primeira utilização.",
+          "data": {
+            "cloud_panel_key": "Painel na conta SPAN"
+          }
+        }
+      },
+      "error": {
+        "invalid_auth": "Autenticação inválida",
+        "cannot_connect": "Não foi possível contactar a nuvem da SPAN"
+      },
+      "abort": {
+        "already_linked": "Este painel já tem uma conta SPAN. Remova-a primeiro para associar outra.",
+        "no_panels": "Esta conta SPAN não tem painéis."
+      }
     }
   }
 }

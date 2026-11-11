@@ -606,7 +606,7 @@
       "message": "不明なモデルのハードウェアバージョン {version} は、このリリースで検証されていません。"
     },
     "history_no_cloud_panels": {
-      "message": "SPAN のクラウドで接続された SPAN パネルが読み込まれていません。履歴のエクスポートにはクラウド接続が必要です。"
+      "message": "SPANのクラウド経由で接続された、またはSPANアカウントが連携されたSPANパネルが読み込まれていません。履歴のエクスポートにはどちらかが必要です。"
     },
     "history_bad_range": {
       "message": "期間の終了は開始より後でなければなりません。"
@@ -616,6 +616,12 @@
     },
     "history_fetch_failed": {
       "message": "{panel} の SPAN 履歴を読み取れませんでした: {reason}"
+    },
+    "cloud_panel_mismatch": {
+      "message": "連携されたSPANアカウントのパネル（{panel}）はこのパネルではありません。ブレーカースペースが一致しません。このパネルからSPANアカウントを削除し、正しいものを追加してください。"
+    },
+    "cloud_account_missing": {
+      "message": "このパネルにはSPANアカウントが連携されていません。"
     }
   },
   "options": {
@@ -1069,6 +1075,39 @@
     "cloud_fields_unavailable": {
       "title": "SPAN クラウドでは利用できません",
       "description": "SPAN クラウド接続は次のデータを Home Assistant に提供しません：{fields}。影響を受けるエンティティ：{count}（例：{examples}）。作り上げた値を表示する代わりに、利用不可のままになります。これは非公式のクラウド接続の制限であり、パネルの故障ではありません。"
+    }
+  },
+  "config_subentries": {
+    "cloud_account": {
+      "initiate_flow": {
+        "user": "SPANアカウントを追加"
+      },
+      "entry_type": "SPANアカウント",
+      "step": {
+        "user": {
+          "title": "SPANにサインイン",
+          "description": "このパネルが属するSPANアカウントを連携します。パネルは引き続きローカルで動作し、アカウントはブレーカーの名前を変更するときやパネルの履歴をエクスポートするときにのみ使用されます。パスワードはサインインにのみ使用され、Home AssistantはSPANが発行するトークンを保存し、パスワードは保存しません。",
+          "data": {
+            "email": "メールアドレス",
+            "password": "パスワード"
+          }
+        },
+        "panel": {
+          "title": "どのパネルですか？",
+          "description": "SPANアカウント内で {panel} に該当するパネルを選択してください。初回使用時に、このパネルのブレーカースペースと照合されます。",
+          "data": {
+            "cloud_panel_key": "SPANアカウント内のパネル"
+          }
+        }
+      },
+      "error": {
+        "invalid_auth": "認証が無効です",
+        "cannot_connect": "SPANのクラウドに接続できませんでした"
+      },
+      "abort": {
+        "already_linked": "このパネルにはすでにSPANアカウントがあります。別のアカウントを連携するには、先に削除してください。",
+        "no_panels": "このSPANアカウントにはパネルがありません。"
+      }
     }
   }
 }

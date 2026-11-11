@@ -45,6 +45,7 @@ from homeassistant.util.json import JsonValueType
 import voluptuous as vol
 
 from .cloud.client import SpanCloudClient
+from .cloud.link import async_linked_cloud_panel, cloud_account
 from .cloud.span_client.cloud_history import Bucket, Resolution
 from .const import DOMAIN
 from .runtime import loaded_runtime_data
@@ -163,16 +164,24 @@ def build_csv(
 
 
 def _cloud_entries(hass: HomeAssistant, entry_id: str | None) -> list[ConfigEntry]:
+    """Return the loaded panels whose history SPAN's cloud can be asked for.
+
+    A panel read through the cloud, or a local panel with a SPAN account linked.
+    """
     entries = [
         entry
         for entry in hass.config_entries.async_loaded_entries(DOMAIN)
         if (entry_id is None or entry.entry_id == entry_id)
         and (runtime := loaded_runtime_data(entry)) is not None
-        and isinstance(runtime.coordinator.client, SpanCloudClient)
+        and (
+            isinstance(runtime.coordinator.client, SpanCloudClient)
+            or cloud_account(entry) is not None
+        )
     ]
     if not entries:
         raise ServiceValidationError(
-            "No SPAN panel connected through SPAN's cloud is loaded.",
+            "No SPAN panel connected through SPAN's cloud, or with a SPAN account linked, "
+            "is loaded.",
             translation_domain=DOMAIN,
             translation_key="history_no_cloud_panels",
         )
@@ -223,33 +232,39 @@ async def async_export_history(
     for entry in entries:
         runtime = loaded_runtime_data(entry)
         assert runtime is not None
-        client = runtime.coordinator.client
-        assert isinstance(client, SpanCloudClient)
+        coordinator = runtime.coordinator
+        # The file is named for the panel as Home Assistant knows it.
+        serial = coordinator.data.serial_number
+        window = (
+            int(start_utc.timestamp() * 1000),
+            int(end_utc.timestamp() * 1000),
+            RESOLUTIONS[resolution],
+            str(time_zone),
+        )
         try:
-            history, labels = await client.fetch_history(
-                int(start_utc.timestamp() * 1000),
-                int(end_utc.timestamp() * 1000),
-                RESOLUTIONS[resolution],
-                str(time_zone),
-            )
+            if isinstance(coordinator.client, SpanCloudClient):
+                history, labels = await coordinator.client.fetch_history(*window)
+            else:
+                async with async_linked_cloud_panel(hass, entry, coordinator.data) as panel:
+                    history, labels = await panel.client.fetch_history(*window)
         except Exception as err:
-            _LOGGER.warning("History export for %s failed: %s", client.serial, err)
+            _LOGGER.warning("History export for %s failed: %s", serial, err)
             raise HomeAssistantError(
-                f"SPAN's history for {client.serial} could not be read: {err}",
+                f"SPAN's history for {serial} could not be read: {err}",
                 translation_domain=DOMAIN,
                 translation_key="history_fetch_failed",
-                translation_placeholders={"panel": client.serial, "reason": str(err)},
+                translation_placeholders={"panel": serial, "reason": str(err)},
             ) from err
         text, rows, totals = build_csv(history, labels, time_zone)
         filename = (
-            f"span_{client.serial}_{start_utc.astimezone(time_zone):%Y%m%d-%H%M}"
+            f"span_{serial}_{start_utc.astimezone(time_zone):%Y%m%d-%H%M}"
             f"_{end_utc.astimezone(time_zone):%Y%m%d-%H%M}_{resolution}.csv"
         )
         path = folder / filename
         await hass.async_add_executor_job(_write, path, text)
         results.append(
             {
-                "panel": client.serial,
+                "panel": serial,
                 "title": entry.title,
                 "file": filename,
                 "path": str(path),

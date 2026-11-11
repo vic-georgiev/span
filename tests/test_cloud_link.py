@@ -1,0 +1,196 @@
+"""A local panel's SPAN account: used on demand, matched by breaker spaces, never left running.
+
+The account side runs the real hub and cloud client over the fake backend
+`test_cloud_transport` uses. The local side is a snapshot: the link reads the
+panel's circuits and their spaces from it and nothing else.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import patch
+
+from homeassistant.components.diagnostics import async_redact_data
+from homeassistant.config_entries import ConfigSubentryData
+from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.exceptions import HomeAssistantError
+import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.span_panel.cloud import hub as hub_module
+from custom_components.span_panel.cloud.link import (
+    SUBENTRY_CLOUD_ACCOUNT,
+    CloudPanelMismatch,
+    async_linked_cloud_panel,
+    cloud_account,
+)
+from custom_components.span_panel.config_flow import SpanPanelConfigFlow
+from custom_components.span_panel.const import (
+    CONF_API_VERSION,
+    CONF_CLOUD_DEVICE_UUID,
+    CONF_CLOUD_MODEL,
+    CONF_CLOUD_PANEL_KEY,
+    CONF_CLOUD_TOKENS,
+    CONF_CLOUD_USER_ID,
+    DOMAIN,
+)
+from custom_components.span_panel.diagnostics import TO_REDACT
+
+from .factories import SpanCircuitSnapshotFactory, SpanPanelSnapshotFactory
+from .test_cloud_transport import SERIAL_40, SITE, TOKENS, FakeStream, _entry
+
+LOCAL_SERIAL = "xg-test-40"
+
+ACCOUNT = {
+    CONF_CLOUD_TOKENS: TOKENS,
+    CONF_CLOUD_USER_ID: "user-1",
+    CONF_CLOUD_DEVICE_UUID: "6F3D0D3E-6E33-4C50-9C6E-6A6E2B7A3B11",
+    CONF_CLOUD_PANEL_KEY: SERIAL_40,
+    CONF_CLOUD_MODEL: "MAIN 40",
+}
+
+
+def _local_entry(*, linked: bool = True) -> MockConfigEntry:
+    """Build a local (SPAN API) panel entry, with or without a SPAN account."""
+    subentries = (
+        [
+            ConfigSubentryData(
+                data=ACCOUNT,
+                subentry_type=SUBENTRY_CLOUD_ACCOUNT,
+                title=f"MAIN 40 {SERIAL_40}",
+                unique_id=SERIAL_40,
+            )
+        ]
+        if linked
+        else []
+    )
+    return MockConfigEntry(
+        domain=DOMAIN,
+        version=7,
+        minor_version=4,
+        unique_id=LOCAL_SERIAL,
+        title="SPAN Panel",
+        data={CONF_API_VERSION: "v2", "host": "192.0.2.40"},
+        subentries_data=subentries,
+    )
+
+
+def _local_snapshot(spaces: dict[str, list[int]]):
+    """Build the local panel's view: its own circuit ids, on the given breaker spaces."""
+    return SpanPanelSnapshotFactory.create(
+        serial_number=LOCAL_SERIAL,
+        circuits={
+            circuit_id: SpanCircuitSnapshotFactory.create(circuit_id=circuit_id, tabs=tabs)
+            for circuit_id, tabs in spaces.items()
+        },
+    )
+
+
+# The fake cloud MAIN 40 holds circuit 21 on space 9 and circuit 22 on 11/13.
+# Locally the same breakers go by other ids, and a remote CT has no space at all.
+SAME_PANEL = {"circuit-1": [9], "circuit-8": [13, 11], "remote-ct-3": []}
+
+
+def _cloud():
+    return (
+        patch.object(hub_module, "discover", return_value=[SITE]),
+        patch.object(hub_module, "SiteStream", FakeStream),
+        patch.object(hub_module, "write_tokens_if_missing"),
+    )
+
+
+async def test_a_rename_reaches_the_cloud_circuit_on_the_same_spaces(hass: HomeAssistant) -> None:
+    FakeStream.backends = {}
+    entry = _local_entry()
+    discover, stream, tokens = _cloud()
+    with discover, stream, tokens:
+        async with async_linked_cloud_panel(hass, entry, _local_snapshot(SAME_PANEL)) as panel:
+            assert panel.cloud_circuit_id("circuit-1") == "21"
+            assert panel.cloud_circuit_id("circuit-8") == "22"
+            with pytest.raises(ValueError, match="remote-ct-3"):
+                panel.cloud_circuit_id("remote-ct-3")
+            assert await panel.rename_circuit("circuit-8", "  Heat   pump ") == "Heat pump"
+            backend = FakeStream.backends[SERIAL_40]
+            assert not backend.stopped
+
+    assert backend.renames == [("circuit-22", "Heat pump")]
+    # Nothing is left running: the stream went with the last user.
+    assert backend.stopped
+    assert not hass.data[DOMAIN][hub_module.HUBS_KEY]
+
+
+async def test_an_account_panel_with_other_breakers_is_refused(hass: HomeAssistant) -> None:
+    FakeStream.backends = {}
+    entry = _local_entry()
+    discover, stream, tokens = _cloud()
+    with discover, stream, tokens, pytest.raises(CloudPanelMismatch, match="spaces 15, 20/22"):
+        async with async_linked_cloud_panel(
+            hass, entry, _local_snapshot({"circuit-1": [9], "a": [15], "b": [20, 22]})
+        ):
+            pytest.fail("a panel that is not this one must not be handed out")
+
+    # Refused, and still nothing left running.
+    assert FakeStream.backends[SERIAL_40].stopped
+    assert not hass.data[DOMAIN][hub_module.HUBS_KEY]
+
+
+async def test_a_panel_without_an_account_says_so(hass: HomeAssistant) -> None:
+    entry = _local_entry(linked=False)
+    assert cloud_account(entry) is None
+    with pytest.raises(HomeAssistantError, match="no SPAN account"):
+        async with async_linked_cloud_panel(hass, entry, _local_snapshot(SAME_PANEL)):
+            pytest.fail("there is no account to open")
+
+
+async def test_signing_in_links_the_account_to_the_local_panel(hass: HomeAssistant) -> None:
+    entry = _local_entry(linked=False)
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.span_panel.cloud.config_flow._sign_in",
+        return_value=(TOKENS, "user-1", [SITE]),
+    ):
+        result = await hass.config_entries.subentries.async_init(
+            (entry.entry_id, SUBENTRY_CLOUD_ACCOUNT), context={"source": "user"}
+        )
+        assert result["step_id"] == "user"
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {"email": "owner@example.com", "password": "not-stored"}
+        )
+        assert result["step_id"] == "panel"
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], {CONF_CLOUD_PANEL_KEY: SERIAL_40}
+        )
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+
+        account = cloud_account(entry)
+        assert account is not None
+        assert account.data[CONF_CLOUD_PANEL_KEY] == SERIAL_40
+        assert account.data[CONF_CLOUD_TOKENS] == TOKENS
+        assert "not-stored" not in str(account.data)
+        # The panel's own entry is untouched: still local, same identity.
+        assert entry.unique_id == LOCAL_SERIAL
+        assert entry.data[CONF_API_VERSION] == "v2"
+
+        # One account per panel.
+        result = await hass.config_entries.subentries.async_init(
+            (entry.entry_id, SUBENTRY_CLOUD_ACCOUNT), context={"source": "user"}
+        )
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "already_linked"
+
+
+def test_only_a_local_panel_is_offered_an_account() -> None:
+    assert SUBENTRY_CLOUD_ACCOUNT in SpanPanelConfigFlow.async_get_supported_subentry_types(
+        _local_entry(linked=False)
+    )
+    # A panel read through the cloud already is its account.
+    assert not SpanPanelConfigFlow.async_get_supported_subentry_types(_entry(SERIAL_40, "MAIN 40"))
+
+
+def test_the_linked_sign_in_stays_out_of_diagnostics() -> None:
+    report = async_redact_data(_local_entry().as_dict(), TO_REDACT)
+    stored = report["subentries"][0]["data"]
+    for key in (CONF_CLOUD_TOKENS, CONF_CLOUD_USER_ID, CONF_CLOUD_DEVICE_UUID):
+        assert stored[key] == "**REDACTED**"
+    assert stored[CONF_CLOUD_PANEL_KEY] == SERIAL_40

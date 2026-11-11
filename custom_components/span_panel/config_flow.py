@@ -13,8 +13,10 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant import config_entries
 from homeassistant.config_entries import (
+    ConfigEntry,
     ConfigFlowContext,
     ConfigFlowResult,
+    ConfigSubentryFlow,
 )
 from homeassistant.const import CONF_ACCESS_TOKEN, CONF_HOST
 from homeassistant.core import callback
@@ -48,7 +50,8 @@ from span_panel_api.exceptions import (
 )
 import voluptuous as vol
 
-from .cloud.config_flow import CONF_USE_SPAN_CLOUD, CloudFlowSteps
+from .cloud.config_flow import CONF_USE_SPAN_CLOUD, CloudAccountSubentryFlow, CloudFlowSteps
+from .cloud.link import SUBENTRY_CLOUD_ACCOUNT
 from .config_flow_options import (
     GENERAL_OPTIONS_SCHEMA,
     get_general_options_defaults,
@@ -74,6 +77,7 @@ from .config_flow_validation import (
     validate_v2_proximity,
 )
 from .const import (
+    API_VERSION_CLOUD,
     CONF_API_VERSION,
     CONF_EBUS_BROKER_HOST,
     CONF_EBUS_BROKER_PASSWORD,
@@ -201,6 +205,16 @@ class SpanPanelConfigFlow(CloudFlowSteps, config_entries.ConfigFlow):
     VERSION = 7
     MINOR_VERSION = 4
     domain = DOMAIN
+
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: ConfigEntry
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        """Offer a SPAN account on a local panel; a cloud panel already is one."""
+        if config_entry.data.get(CONF_API_VERSION) == API_VERSION_CLOUD:
+            return {}
+        return {SUBENTRY_CLOUD_ACCOUNT: CloudAccountSubentryFlow}
 
     def is_matching(self, other_flow: SpanPanelConfigFlow) -> bool:
         """Return True if other_flow is a matching Span Panel."""

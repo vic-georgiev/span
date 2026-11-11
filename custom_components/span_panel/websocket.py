@@ -13,6 +13,7 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er
 from span_panel_api import shared_meter_groups
 import voluptuous as vol
 
+from .cloud.link import async_linked_cloud_panel, cloud_account
 from .cloud.snapshot import first_space_for
 from .const import CONF_CLOUD_MODEL, DOMAIN
 from .control_gate import ControlMode
@@ -110,9 +111,9 @@ async def handle_rename_circuit(
 
     Answers `{"name": <the name as sent>}`. The entities and the card follow
     once the panel's new description arrives, a few seconds later. Errors:
-    `not_supported` when this connection cannot write names (only SPAN's cloud
-    can today), `invalid` for an empty or overlong name or an unknown circuit,
-    `rename_failed` when SPAN refuses.
+    `not_supported` when this panel cannot write names (only SPAN's cloud can
+    today, so a local panel needs a SPAN account linked), `invalid` for an empty
+    or overlong name or an unknown circuit, `rename_failed` when SPAN refuses.
     """
     resolved = resolve_panel_device(hass, connection, msg)
     if resolved is None:
@@ -122,14 +123,19 @@ async def handle_rename_circuit(
     if config_entry.state is not ConfigEntryState.LOADED or runtime_data is None:
         connection.send_error(msg["id"], "not_loaded", "SPAN Panel integration is not loaded")
         return
-    rename = getattr(runtime_data.coordinator.client, "rename_circuit", None)
-    if rename is None:
+    coordinator = runtime_data.coordinator
+    rename = getattr(coordinator.client, "rename_circuit", None)
+    if rename is None and cloud_account(config_entry) is None:
         connection.send_error(
-            msg["id"], "not_supported", "Renaming circuits needs the SPAN cloud connection"
+            msg["id"], "not_supported", "Renaming circuits needs a SPAN account on this panel"
         )
         return
     try:
-        name = await rename(msg["circuit_id"], msg["name"])
+        if rename is not None:
+            name = await rename(msg["circuit_id"], msg["name"])
+        else:
+            async with async_linked_cloud_panel(hass, config_entry, coordinator.data) as panel:
+                name = await panel.rename_circuit(msg["circuit_id"], msg["name"])
     except ValueError as err:
         connection.send_error(msg["id"], "invalid", str(err))
         return
@@ -375,9 +381,11 @@ async def handle_panel_topology(
             "panel_size": snapshot.panel_size,
             "first_space": first_space_for(config_entry.data.get(CONF_CLOUD_MODEL)),
             # Whether `span_panel/rename_circuit` can write names on this panel.
-            "can_rename": hasattr(coordinator.client, "rename_circuit"),
+            "can_rename": hasattr(coordinator.client, "rename_circuit")
+            or cloud_account(config_entry) is not None,
             # Whether `span_panel/export_history` can read this panel's history.
-            "can_export_history": hasattr(coordinator.client, "fetch_history"),
+            "can_export_history": hasattr(coordinator.client, "fetch_history")
+            or cloud_account(config_entry) is not None,
             # The panel's first and last breaker positions, occupied or not, as
             # the snapshot reports them; null where the panel does not say.
             "first_position": snapshot.first_position,
