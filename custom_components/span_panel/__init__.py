@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime
 import logging
 
 from homeassistant.components.frontend import async_remove_panel as async_remove_panel
@@ -20,6 +21,7 @@ from homeassistant.helpers import (
     device_registry as dr,
     entity_registry as er,
 )
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.typing import ConfigType
@@ -58,6 +60,8 @@ from .ca_repairs import (
     async_raise_ca_unusable,
     async_raise_rest_tls_untrusted,
 )
+from .cloud.link import cloud_account
+from .cloud.names import PULL_INTERVAL, async_pull_names
 from .config_flow_validation import (
     LeafVerdict,
     PanelCaUnusableError,
@@ -833,6 +837,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SpanPanelConfigEntry) ->
         # --- Common setup for all transport modes ---
 
         entry.async_on_unload(entry.add_update_listener(update_listener))
+        _async_follow_account_names(hass, entry, coordinator)
 
         snapshot: SpanPanelSnapshot = coordinator.data
         serial_number = snapshot.serial_number
@@ -1000,6 +1005,22 @@ async def async_remove_config_entry_device(
             return False
 
     return True
+
+
+@callback
+def _async_follow_account_names(
+    hass: HomeAssistant, entry: SpanPanelConfigEntry, coordinator: SpanPanelCoordinator
+) -> None:
+    """Read the linked account's circuit names now and once a day (see `cloud.names`)."""
+    if cloud_account(entry) is None:
+        return
+
+    async def _pull(_now: datetime | None = None) -> None:
+        if coordinator.data is not None:
+            await async_pull_names(hass, entry, coordinator.data)
+
+    entry.async_create_background_task(hass, _pull(), "span_panel account names")
+    entry.async_on_unload(async_track_time_interval(hass, _pull, PULL_INTERVAL))
 
 
 async def update_listener(hass: HomeAssistant, entry: SpanPanelConfigEntry) -> None:

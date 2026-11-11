@@ -14,6 +14,7 @@ from span_panel_api import shared_meter_groups
 import voluptuous as vol
 
 from .cloud.link import CONF_RESERVED_BREAKERS, async_linked_cloud_panel, cloud_account
+from .cloud.names import record_rename
 from .cloud.snapshot import first_space_for
 from .const import CONF_CLOUD_MODEL, DOMAIN
 from .control_gate import ControlMode
@@ -136,6 +137,11 @@ async def handle_rename_circuit(
         else:
             async with async_linked_cloud_panel(hass, config_entry, coordinator.data) as panel:
                 name = await panel.rename_circuit(msg["circuit_id"], msg["name"])
+            # The panel's local data does not follow a rename, so the name SPAN
+            # confirmed is kept with the link and shown from there.
+            circuit = coordinator.data.circuits.get(msg["circuit_id"])
+            if circuit is not None:
+                record_rename(hass, config_entry, circuit.tabs, name)
     except ValueError as err:
         connection.send_error(msg["id"], "invalid", str(err))
         return

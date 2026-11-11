@@ -19,6 +19,7 @@ from span_panel_api import (
 from span_panel_api.exceptions import SpanPanelValidationError
 
 from .adoption import adopted_control_count, classify
+from .cloud.names import names_diagnostics
 from .const import (
     CONF_CLOUD_DEVICE_UUID,
     CONF_CLOUD_TOKENS,
@@ -479,6 +480,9 @@ async def async_get_config_entry_diagnostics(
         "entities": _entity_registry_rows(hass, entry),
         "panel": panel_data,
         "circuits": circuit_data,
+        # With a SPAN account linked: when its names were last read, the renames
+        # seen and where, and each circuit the panel itself still names otherwise.
+        "circuit_names": names_diagnostics(entry, coordinator.panel_names),
         # One row per group of circuits that share one meter or one relay: each
         # member reports the same readings, so a support case can see a double
         # count in the Energy dashboard for what it is.

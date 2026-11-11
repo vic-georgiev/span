@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from span_panel_api import SpanPanelSnapshot
+from span_panel_api import SpanCircuitSnapshot, SpanPanelSnapshot
 
 from custom_components.span_panel.const import (
     CONF_CLOUD_DEVICE_UUID,
@@ -107,6 +107,10 @@ class LinkedCloudPanel:
             for circuit in self._cloud.circuits.values()
             if circuit.tabs and occupied.isdisjoint(circuit.tabs)
         ]
+
+    def cloud_circuits(self) -> list[SpanCircuitSnapshot]:
+        """Return the circuits as the cloud describes them."""
+        return list(self._cloud.circuits.values()) if self._cloud is not None else []
 
     def names_in_common(self) -> int:
         """Count the local circuits the cloud panel names identically, on the same spaces.

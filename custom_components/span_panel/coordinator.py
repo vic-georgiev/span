@@ -31,6 +31,7 @@ from span_panel_api.exceptions import (
     SpanPanelStaleDataError,
 )
 
+from .cloud.names import account_names, spaces_key, with_account_names
 from .const import DOMAIN
 from .energy_orientation import EnergyCounter, EnergyMeter
 from .helpers import (
@@ -128,6 +129,11 @@ class SpanPanelCoordinator(DataUpdateCoordinator[SpanPanelSnapshot]):
         """
         self._client = client
         self.timeline = PowerTimeline()
+        # The linked SPAN account's circuit names, shown in place of the
+        # panel's own, which do not follow a rename (see `cloud.names`); and
+        # the panel's own, kept for diagnostics.
+        self._account_names = account_names(config_entry)
+        self.panel_names: dict[str, str] = {}
         self._latest: SpanPanelSnapshot | None = None
         self._publisher: Debouncer[Coroutine[Any, Any, None]] | None = (
             Debouncer(
@@ -526,6 +532,7 @@ class SpanPanelCoordinator(DataUpdateCoordinator[SpanPanelSnapshot]):
     async def _on_snapshot_push(self, snapshot: SpanPanelSnapshot) -> None:
         """Handle a pushed snapshot from MQTT streaming."""
         self.timeline.record(_epoch_time(), snapshot)
+        snapshot = self._named(snapshot)
         self._mark_panel_online()
         self._check_capability_change(snapshot)
         self._check_settability_change(snapshot)
@@ -534,6 +541,17 @@ class SpanPanelCoordinator(DataUpdateCoordinator[SpanPanelSnapshot]):
             await self._publish_latest()
         else:
             await self._publisher.async_call()
+
+    def _named(self, snapshot: SpanPanelSnapshot) -> SpanPanelSnapshot:
+        """Name the circuits as the linked account does, remembering the panel's own names."""
+        if not self._account_names:
+            return snapshot
+        self.panel_names = {
+            spaces_key(circuit.tabs): circuit.name
+            for circuit in snapshot.circuits.values()
+            if circuit.tabs
+        }
+        return with_account_names(snapshot, self._account_names)
 
     async def _publish_latest(self) -> None:
         """Hand the newest snapshot to the entities."""
@@ -934,7 +952,7 @@ class SpanPanelCoordinator(DataUpdateCoordinator[SpanPanelSnapshot]):
             self._last_tick_epoch = cycle_start
 
             fetch_start = _epoch_time()
-            snapshot = await self._client.get_snapshot()
+            snapshot = self._named(await self._client.get_snapshot())
             fetch_duration = _epoch_time() - fetch_start
 
             cycle_total = _epoch_time() - cycle_start
