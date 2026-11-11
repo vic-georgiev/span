@@ -1147,7 +1147,7 @@
         },
         "panel": {
           "title": "Que painel é este?",
-          "description": "Escolha na sua conta SPAN o painel que corresponde a {panel}. É verificado com os espaços dos disjuntores deste painel na primeira utilização.",
+          "description": "Escolha o painel da sua conta SPAN que é {panel}. Ele é comparado com as posições de disjuntores deste painel antes de ser vinculado.",
           "data": {
             "cloud_panel_key": "Painel na conta SPAN"
           }
@@ -1155,7 +1155,9 @@
       },
       "error": {
         "invalid_auth": "Autenticação inválida",
-        "cannot_connect": "Não foi possível contactar a nuvem da SPAN"
+        "cannot_connect": "Não foi possível contactar a nuvem da SPAN",
+        "wrong_panel": "Esse painel SPAN não tem os disjuntores deste painel: escolha o painel correto.",
+        "panel_not_loaded": "Este painel não está em funcionamento. Aguarde até que esteja conectado e vincule a conta."
       },
       "abort": {
         "already_linked": "Este painel já tem uma conta SPAN. Remova-a primeiro para associar outra.",

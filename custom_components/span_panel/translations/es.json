@@ -1147,7 +1147,7 @@
         },
         "panel": {
           "title": "¿Qué panel es este?",
-          "description": "Elige el panel de tu cuenta de SPAN que corresponde a {panel}. Se comprueba con los espacios de los interruptores de este panel la primera vez que se usa.",
+          "description": "Elija el panel de su cuenta de SPAN que es {panel}. Se comprueba con los espacios de interruptores de este panel antes de vincularlo.",
           "data": {
             "cloud_panel_key": "Panel en la cuenta de SPAN"
           }
@@ -1155,7 +1155,9 @@
       },
       "error": {
         "invalid_auth": "Autenticación no válida",
-        "cannot_connect": "No se pudo conectar con la nube de SPAN"
+        "cannot_connect": "No se pudo conectar con la nube de SPAN",
+        "wrong_panel": "Ese panel de SPAN no tiene los interruptores de este panel: elija el panel correcto.",
+        "panel_not_loaded": "Este panel no está en funcionamiento. Espere a que se conecte y vincule la cuenta."
       },
       "abort": {
         "already_linked": "Este panel ya tiene una cuenta de SPAN. Quítala primero para vincular otra.",

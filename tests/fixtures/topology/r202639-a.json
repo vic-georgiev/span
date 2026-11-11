@@ -16,13 +16,20 @@
         "select": "select.span_panel_7_bathroom_outlets_circuit_priority",
         "switch": "switch.span_panel_7_bathroom_outlets_breaker"
       },
+      "feeds_role": null,
       "is_generation": false,
       "is_never_backup": false,
       "is_user_controllable": true,
       "name": "7 Bathroom / Outlets",
       "outside_panel": false,
+      "powerup_managed": true,
+      "powerup_rank": 37,
       "priority": "NEVER",
       "priority_target": null,
+      "protection_functions": [
+        "OVERCURRENT"
+      ],
+      "relay_requester": "NONE",
       "relay_state": "CLOSED",
       "relay_state_target": null,
       "shared_meter_group": null,
@@ -46,13 +53,20 @@
         "select": "select.span_panel_6_kitchen_outlets_circuit_priority",
         "switch": "switch.span_panel_6_kitchen_outlets_breaker"
       },
+      "feeds_role": null,
       "is_generation": false,
       "is_never_backup": false,
       "is_user_controllable": true,
       "name": "6 Kitchen / Outlets",
       "outside_panel": false,
+      "powerup_managed": true,
+      "powerup_rank": 37,
       "priority": "NEVER",
       "priority_target": null,
+      "protection_functions": [
+        "OVERCURRENT"
+      ],
+      "relay_requester": "NONE",
       "relay_state": "CLOSED",
       "relay_state_target": null,
       "shared_meter_group": null,
@@ -73,13 +87,18 @@
         "power": "sensor.span_panel_remote_ct_3_power",
         "produced_energy": "sensor.span_panel_remote_ct_3_produced_energy"
       },
+      "feeds_role": null,
       "is_generation": false,
       "is_never_backup": null,
       "is_user_controllable": false,
       "name": "Remote CT 3",
       "outside_panel": true,
+      "powerup_managed": null,
+      "powerup_rank": null,
       "priority": "UNKNOWN",
       "priority_target": null,
+      "protection_functions": null,
+      "relay_requester": "UNKNOWN",
       "relay_state": "UNKNOWN",
       "relay_state_target": null,
       "shared_meter_group": null,
@@ -112,6 +131,7 @@
     "upstream_l2_current": "sensor.span_panel_upstream_l2_current"
   },
   "panel_size": 0,
+  "reserved": [],
   "serial": "xg-3940-9ooto",
   "sub_devices": {}
 }

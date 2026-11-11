@@ -1147,7 +1147,7 @@
         },
         "panel": {
           "title": "De quel panneau s'agit-il ?",
-          "description": "Choisissez dans votre compte SPAN le panneau qui correspond à {panel}. Il est vérifié avec les emplacements des disjoncteurs de ce panneau à la première utilisation.",
+          "description": "Choisissez le panneau de votre compte SPAN qui est {panel}. Il est comparé aux emplacements de disjoncteurs de ce panneau avant d'être lié.",
           "data": {
             "cloud_panel_key": "Panneau dans le compte SPAN"
           }
@@ -1155,7 +1155,9 @@
       },
       "error": {
         "invalid_auth": "Authentification invalide",
-        "cannot_connect": "Impossible de joindre le cloud de SPAN"
+        "cannot_connect": "Impossible de joindre le cloud de SPAN",
+        "wrong_panel": "Ce panneau SPAN n'a pas les disjoncteurs de ce panneau : choisissez le bon panneau.",
+        "panel_not_loaded": "Ce panneau n'est pas en marche. Attendez qu'il soit connecté, puis liez le compte."
       },
       "abort": {
         "already_linked": "Ce panneau a déjà un compte SPAN. Supprimez-le d'abord pour en associer un autre.",

@@ -7,13 +7,13 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components import websocket_api
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from span_panel_api import shared_meter_groups
 import voluptuous as vol
 
-from .cloud.link import async_linked_cloud_panel, cloud_account
+from .cloud.link import CONF_RESERVED_BREAKERS, async_linked_cloud_panel, cloud_account
 from .cloud.snapshot import first_space_for
 from .const import CONF_CLOUD_MODEL, DOMAIN
 from .control_gate import ControlMode
@@ -31,7 +31,7 @@ from .house import children, feed_to_options, house_feeds, loaded_panels, roots
 from .id_builder import build_binary_sensor_unique_id, match_circuit_id
 from .runtime import SpanPanelRuntimeData, loaded_runtime_data
 from .solar_topology import SolarTopology, solar_topology
-from .util import classify_sub_device_identifier, pv_device_ref
+from .util import SUB_DEVICE_BESS, classify_sub_device_identifier, pv_device_ref
 from .websocket_adopted import handle_adopted_curate, handle_adopted_list
 from .websocket_panel import resolve_panel_device
 
@@ -337,6 +337,19 @@ async def handle_panel_topology(
             "relay_state_target": circuit.relay_state_target,
             "is_user_controllable": circuit.is_user_controllable,
             "breaker_rating_a": circuit.breaker_rating_a,
+            # The breaker and what it serves, as the panel declares them, for the
+            # circuit's detail view. Null where the panel does not say.
+            "protection_functions": (
+                list(circuit.protection_functions)
+                if circuit.protection_functions is not None
+                else None
+            ),
+            "feeds_role": circuit.feeds_role,
+            # PowerUp (SPAN's power control system): whether it manages this
+            # circuit, and the circuit's rank in it.
+            "powerup_managed": circuit.pcs_managed,
+            "powerup_rank": circuit.pcs_priority,
+            "relay_requester": circuit.relay_requester,
             # Backup facts belong to a breaker; a meter outside the panel has none.
             "always_on": None if circuit.measures_outside_panel else circuit.always_on,
             "priority": circuit.priority,
@@ -399,6 +412,7 @@ async def handle_panel_topology(
             "serial": snapshot.serial_number,
             "firmware": snapshot.firmware_version,
             "panel_size": snapshot.panel_size,
+            "reserved": _reserved_breakers(config_entry, sub_devices),
             "first_space": first_space_for(config_entry.data.get(CONF_CLOUD_MODEL)),
             # Whether `span_panel/rename_circuit` can write names on this panel.
             "can_rename": hasattr(coordinator.client, "rename_circuit")
@@ -423,6 +437,29 @@ async def handle_panel_topology(
             "sub_devices": sub_devices,
         },
     )
+
+
+def _reserved_breakers(
+    config_entry: ConfigEntry, sub_devices: Mapping[str, Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """Return the breakers SPAN API leaves out, as the linked account reported them.
+
+    A panel with one battery and one such breaker has the battery on it: on a
+    MAIN 40 that is the two-pole on 46/48, which SPAN reserves for the battery
+    and publishes nothing for locally. The battery's device is named so its
+    figures can be shown in the breaker's place. With more of either, which
+    belongs to which is not known, and none is named.
+    """
+    account = cloud_account(config_entry)
+    breakers = list(account.data.get(CONF_RESERVED_BREAKERS, [])) if account else []
+    batteries = [
+        dev_id for dev_id, record in sub_devices.items() if record["type"] == SUB_DEVICE_BESS
+    ]
+    battery = batteries[0] if len(batteries) == 1 and len(breakers) == 1 else None
+    return [
+        {"tabs": breaker["tabs"], "name": breaker["name"], "battery_device_id": battery}
+        for breaker in breakers
+    ]
 
 
 def _group_of(groups: Mapping[str, tuple[str, ...]]) -> dict[str, str]:

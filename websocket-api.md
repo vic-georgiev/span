@@ -183,24 +183,41 @@ Home Assistant's device list, which no longer holds a pre-2026.8 ID.
 | `device_name`     | string      | HA device display name                                 |
 | `circuits`        | object      | Circuit UUID keyed map (see below)                     |
 | `sub_devices`     | object      | HA device ID keyed map of BESS/MID/EVSE/PV (see below) |
+| `reserved`        | array       | Breakers SPAN API leaves out (see below)               |
 
 #### Circuit Object
 
-| Field                  | Type        | Description                                                                                |
-| ---------------------- | ----------- | ------------------------------------------------------------------------------------------ |
-| `tabs`                 | int[]       | Sorted breaker slot positions (1-indexed)                                                  |
-| `name`                 | string/null | Circuit name from the panel (null if unnamed)                                              |
-| `voltage`              | int/null    | 120 (single tab), 240 (double tab), or null where the pole count does not say              |
-| `device_type`          | string      | `circuit`, `pv`, or `evse`                                                                 |
-| `relay_state`          | string      | `CLOSED`, `OPEN`, or `UNKNOWN`                                                             |
-| `relay_state_target`   | string/null | The relay state last commanded and not yet reached, or null                                |
-| `always_on`            | bool        | Whether the panel keeps this circuit on and offers no relay control                        |
-| `priority`             | string      | Shed priority as the panel publishes it: `NEVER`, `SOC_THRESHOLD`, `OFF_GRID` or `UNKNOWN` |
-| `priority_target`      | string/null | The priority last commanded and not yet reached, or null                                   |
-| `is_never_backup`      | bool        | Whether the panel pins the priority, so it cannot be set                                   |
-| `is_user_controllable` | bool        | Whether the circuit relay can be toggled                                                   |
-| `breaker_rating_a`     | float/null  | Breaker amperage rating (null if not reported)                                             |
-| `entities`             | object      | Role-keyed map of entity IDs (see below)                                                   |
+| Field                  | Type          | Description                                                                                     |
+| ---------------------- | ------------- | ----------------------------------------------------------------------------------------------- |
+| `tabs`                 | int[]         | Sorted breaker slot positions (1-indexed)                                                       |
+| `name`                 | string/null   | Circuit name from the panel (null if unnamed)                                                   |
+| `voltage`              | int/null      | 120 (single tab), 240 (double tab), or null where the pole count does not say                   |
+| `device_type`          | string        | `circuit`, `pv`, or `evse`                                                                      |
+| `relay_state`          | string        | `CLOSED`, `OPEN`, or `UNKNOWN`                                                                  |
+| `relay_state_target`   | string/null   | The relay state last commanded and not yet reached, or null                                     |
+| `always_on`            | bool          | Whether the panel keeps this circuit on and offers no relay control                             |
+| `priority`             | string        | Shed priority as the panel publishes it: `NEVER`, `SOC_THRESHOLD`, `OFF_GRID` or `UNKNOWN`      |
+| `priority_target`      | string/null   | The priority last commanded and not yet reached, or null                                        |
+| `is_never_backup`      | bool          | Whether the panel pins the priority, so it cannot be set                                        |
+| `is_user_controllable` | bool          | Whether the circuit relay can be toggled                                                        |
+| `breaker_rating_a`     | float/null    | Breaker amperage rating (null if not reported)                                                  |
+| `protection_functions` | string[]/null | What the breaker protects against: `OVERCURRENT`, `SHORT_CIRCUIT`, `GROUND_FAULT`, `ARC_FAULT`  |
+| `feeds_role`           | string/null   | What the circuit feeds: `LOADS`, `SUBPANEL`, `SOLAR`, `STORAGE`, `GENERATOR`, `MIXED`, `UNUSED` |
+| `powerup_managed`      | bool/null     | Whether PowerUp (SPAN's power control system) manages the circuit                               |
+| `powerup_rank`         | int/null      | The circuit's rank in PowerUp                                                                   |
+| `relay_requester`      | string        | What last moved the relay, as the panel reports it (`USER`, `LOAD_SHED`, `PCS`, `NONE`...)      |
+| `entities`             | object        | Role-keyed map of entity IDs (see below)                                                        |
+
+#### Reserved Breaker Object
+
+A breaker the panel's linked SPAN account reports on spaces SPAN API publishes nothing for: on a MAIN 40, the battery's two-pole on 46/48. Read once, when the
+account is linked; empty without an account.
+
+| Field               | Type        | Description                                                                                    |
+| ------------------- | ----------- | ---------------------------------------------------------------------------------------------- |
+| `tabs`              | int[]       | The breaker's spaces                                                                           |
+| `name`              | string      | The name SPAN gives it                                                                         |
+| `battery_device_id` | string/null | The battery's sub-device, where the panel has one battery and one such breaker; null otherwise |
 
 #### Circuit Entity Roles
 

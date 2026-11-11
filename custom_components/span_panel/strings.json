@@ -1147,7 +1147,7 @@
         },
         "panel": {
           "title": "Which panel is this?",
-          "description": "Choose the panel in your SPAN account that is {panel}. It is checked against this panel's breaker spaces the first time it is used.",
+          "description": "Choose the panel in your SPAN account that is {panel}. It is checked against this panel's breaker spaces before it is linked.",
           "data": {
             "cloud_panel_key": "Panel in the SPAN account"
           }
@@ -1155,7 +1155,9 @@
       },
       "error": {
         "invalid_auth": "Invalid authentication",
-        "cannot_connect": "SPAN's cloud could not be reached"
+        "cannot_connect": "SPAN's cloud could not be reached",
+        "wrong_panel": "That SPAN panel does not have this panel's breakers: choose the panel that is this one.",
+        "panel_not_loaded": "This panel is not running. Wait until it is connected, then link the account."
       },
       "abort": {
         "already_linked": "This panel already has a SPAN account. Remove it first to link another.",

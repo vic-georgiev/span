@@ -46,8 +46,14 @@ from custom_components.span_panel.options import (
     ENERGY_DISPLAY_PRECISION,
     POWER_DISPLAY_PRECISION,
 )
+from custom_components.span_panel.runtime import loaded_runtime_data
 
-from .link import cloud_account
+from .link import (
+    CONF_RESERVED_BREAKERS,
+    CloudPanelMismatch,
+    async_open_cloud_panel,
+    cloud_account,
+)
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigFlow
@@ -258,36 +264,70 @@ class CloudAccountSubentryFlow(ConfigSubentryFlow):
                 return await self.async_step_panel()
         return self.async_show_form(step_id="user", data_schema=CLOUD_LOGIN_SCHEMA, errors=errors)
 
+    def _panel_schema(self) -> vol.Schema:
+        options = [
+            SelectOptionDict(value=key, label=panel_title(panel).removeprefix("SPAN "))
+            for key, panel in self._panels.items()
+        ]
+        return vol.Schema(
+            {
+                vol.Required(CONF_CLOUD_PANEL_KEY): SelectSelector(
+                    SelectSelectorConfig(options=options)
+                )
+            }
+        )
+
     async def async_step_panel(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Say which of the account's panels this entry's panel is."""
         if user_input is None:
-            options = [
-                SelectOptionDict(value=key, label=panel_title(panel).removeprefix("SPAN "))
-                for key, panel in self._panels.items()
-            ]
-            schema = vol.Schema(
-                {
-                    vol.Required(CONF_CLOUD_PANEL_KEY): SelectSelector(
-                        SelectSelectorConfig(options=options)
-                    )
-                }
-            )
             return self.async_show_form(
                 step_id="panel",
-                data_schema=schema,
+                data_schema=self._panel_schema(),
                 description_placeholders={"panel": self._get_entry().title},
             )
         panel = self._panels[user_input[CONF_CLOUD_PANEL_KEY]]
+        data: dict[str, Any] = {
+            CONF_CLOUD_TOKENS: self._tokens,
+            CONF_CLOUD_USER_ID: self._user_id,
+            CONF_CLOUD_DEVICE_UUID: str(uuid.uuid4()).upper(),
+            CONF_CLOUD_PANEL_KEY: panel.key,
+            CONF_CLOUD_MODEL: panel.model,
+        }
+        error = await self._async_read_panel(data)
+        if error is not None:
+            return self.async_show_form(
+                step_id="panel",
+                data_schema=self._panel_schema(),
+                description_placeholders={"panel": self._get_entry().title},
+                errors={"base": error},
+            )
         return self.async_create_entry(
             title=panel_title(panel).removeprefix("SPAN "),
-            data={
-                CONF_CLOUD_TOKENS: self._tokens,
-                CONF_CLOUD_USER_ID: self._user_id,
-                CONF_CLOUD_DEVICE_UUID: str(uuid.uuid4()).upper(),
-                CONF_CLOUD_PANEL_KEY: panel.key,
-                CONF_CLOUD_MODEL: panel.model,
-            },
+            data=data,
             unique_id=panel.key,
         )
+
+    async def _async_read_panel(self, data: dict[str, Any]) -> str | None:
+        """Check the chosen panel is this one, and keep what only the cloud says about it.
+
+        Matched by breaker spaces against the panel as SPAN API reads it now, so
+        a wrong pick is refused here. The breakers SPAN API leaves out are read
+        while the account's stream is open and kept with the link. Returns an
+        error key, or None.
+        """
+        entry = self._get_entry()
+        runtime = loaded_runtime_data(entry)
+        local = runtime.coordinator.data if runtime is not None else None
+        if local is None:
+            return "panel_not_loaded"
+        try:
+            async with async_open_cloud_panel(self.hass, entry, data, local) as linked:
+                data[CONF_RESERVED_BREAKERS] = linked.reserved_breakers()
+        except CloudPanelMismatch:
+            return "wrong_panel"
+        except Exception:  # noqa: BLE001 -- any failure to reach the panel is reported the same
+            _LOGGER.debug("Could not read the SPAN account's panel", exc_info=True)
+            return "cannot_connect"
+        return None

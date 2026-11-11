@@ -7,7 +7,7 @@ panel's circuits and their spaces from it and nothing else.
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigSubentryData
@@ -19,6 +19,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.span_panel.cloud import hub as hub_module
 from custom_components.span_panel.cloud.link import (
+    CONF_RESERVED_BREAKERS,
     SUBENTRY_CLOUD_ACCOUNT,
     CloudPanelMismatch,
     async_linked_cloud_panel,
@@ -35,6 +36,7 @@ from custom_components.span_panel.const import (
     DOMAIN,
 )
 from custom_components.span_panel.diagnostics import TO_REDACT
+from custom_components.span_panel.websocket import _reserved_breakers
 
 from .factories import SpanCircuitSnapshotFactory, SpanPanelSnapshotFactory
 from .test_cloud_transport import SERIAL_40, SITE, TOKENS, FakeStream, _entry
@@ -142,10 +144,16 @@ async def test_a_panel_without_an_account_says_so(hass: HomeAssistant) -> None:
             pytest.fail("there is no account to open")
 
 
-async def test_signing_in_links_the_account_to_the_local_panel(hass: HomeAssistant) -> None:
-    entry = _local_entry(linked=False)
-    entry.add_to_hass(hass)
+def _running(snapshot: object) -> object:
+    """Patch the panel's runtime, so the link step reads `snapshot` as the panel now."""
+    return patch(
+        "custom_components.span_panel.cloud.config_flow.loaded_runtime_data",
+        return_value=None if snapshot is None else MagicMock(coordinator=MagicMock(data=snapshot)),
+    )
 
+
+async def _choose_panel(hass: HomeAssistant, entry: MockConfigEntry) -> dict:
+    """Sign in and choose the account's MAIN 40 as this panel."""
     with patch(
         "custom_components.span_panel.cloud.config_flow._sign_in",
         return_value=(TOKENS, "user-1", [SITE]),
@@ -158,14 +166,29 @@ async def test_signing_in_links_the_account_to_the_local_panel(hass: HomeAssista
             result["flow_id"], {"email": "owner@example.com", "password": "not-stored"}
         )
         assert result["step_id"] == "panel"
-        result = await hass.config_entries.subentries.async_configure(
+        return await hass.config_entries.subentries.async_configure(
             result["flow_id"], {CONF_CLOUD_PANEL_KEY: SERIAL_40}
         )
+
+
+async def test_signing_in_links_the_account_to_the_local_panel(hass: HomeAssistant) -> None:
+    FakeStream.backends = {}
+    entry = _local_entry(linked=False)
+    entry.add_to_hass(hass)
+
+    # Locally only the breaker on space 9 is published; the cloud also has 11/13,
+    # as SPAN API leaves out a MAIN 40's battery breaker on 46/48.
+    discover, stream, tokens = _cloud()
+    with discover, stream, tokens, _running(_local_snapshot({"circuit-1": [9]})):
+        result = await _choose_panel(hass, entry)
         assert result["type"] is FlowResultType.CREATE_ENTRY
+        # Read once while linking, and nothing left running afterwards.
+        assert FakeStream.backends[SERIAL_40].stopped
 
         account = cloud_account(entry)
         assert account is not None
         assert account.data[CONF_CLOUD_PANEL_KEY] == SERIAL_40
+        assert account.data[CONF_RESERVED_BREAKERS] == [{"tabs": [11, 13], "name": "A/C Condenser"}]
         assert account.data[CONF_CLOUD_TOKENS] == TOKENS
         assert "not-stored" not in str(account.data)
         # The panel's own entry is untouched: still local, same identity.
@@ -194,3 +217,66 @@ def test_the_linked_sign_in_stays_out_of_diagnostics() -> None:
     for key in (CONF_CLOUD_TOKENS, CONF_CLOUD_USER_ID, CONF_CLOUD_DEVICE_UUID):
         assert stored[key] == "**REDACTED**"
     assert stored[CONF_CLOUD_PANEL_KEY] == SERIAL_40
+
+
+async def test_the_wrong_panel_is_refused_while_linking(hass: HomeAssistant) -> None:
+    FakeStream.backends = {}
+    entry = _local_entry(linked=False)
+    entry.add_to_hass(hass)
+    discover, stream, tokens = _cloud()
+    with discover, stream, tokens, _running(_local_snapshot({"a": [15], "b": [20, 22]})):
+        result = await _choose_panel(hass, entry)
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "wrong_panel"}
+    assert cloud_account(entry) is None
+
+
+async def test_a_panel_that_is_not_running_is_not_linked_blind(hass: HomeAssistant) -> None:
+    entry = _local_entry(linked=False)
+    entry.add_to_hass(hass)
+    with _running(None):
+        result = await _choose_panel(hass, entry)
+    assert result["errors"] == {"base": "panel_not_loaded"}
+    assert cloud_account(entry) is None
+
+
+def _linked_with(breakers: list[dict]) -> MockConfigEntry:
+    entry = _local_entry(linked=False)
+    return MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=LOCAL_SERIAL,
+        subentries_data=[
+            ConfigSubentryData(
+                data={**ACCOUNT, CONF_RESERVED_BREAKERS: breakers},
+                subentry_type=SUBENTRY_CLOUD_ACCOUNT,
+                title="MAIN 40",
+                unique_id=SERIAL_40,
+            )
+        ],
+        data=dict(entry.data),
+    )
+
+
+BATTERY_BREAKER = {"tabs": [46, 48], "name": "Battery"}
+
+
+def test_the_one_battery_takes_the_one_reserved_breaker() -> None:
+    entry = _linked_with([BATTERY_BREAKER])
+    sub_devices = {"dev-bess": {"type": "bess"}, "dev-mid": {"type": "mid"}}
+    assert _reserved_breakers(entry, sub_devices) == [
+        {"tabs": [46, 48], "name": "Battery", "battery_device_id": "dev-bess"}
+    ]
+
+
+def test_which_battery_is_on_which_breaker_is_not_guessed() -> None:
+    entry = _linked_with([BATTERY_BREAKER, {"tabs": [42, 44], "name": "Spare"}])
+    reserved = _reserved_breakers(entry, {"dev-bess": {"type": "bess"}})
+    assert [breaker["battery_device_id"] for breaker in reserved] == [None, None]
+    # Without a battery the breaker is still shown, by the name SPAN gives it.
+    assert _reserved_breakers(_linked_with([BATTERY_BREAKER]), {}) == [
+        {"tabs": [46, 48], "name": "Battery", "battery_device_id": None}
+    ]
+
+
+def test_no_account_no_reserved_breakers() -> None:
+    assert _reserved_breakers(_local_entry(linked=False), {"dev-bess": {"type": "bess"}}) == []

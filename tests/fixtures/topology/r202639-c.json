@@ -16,13 +16,20 @@
         "select": "select.span_panel_bedroom_lights_circuit_priority",
         "switch": "switch.span_panel_bedroom_lights_breaker"
       },
+      "feeds_role": null,
       "is_generation": false,
       "is_never_backup": false,
       "is_user_controllable": true,
       "name": "Bedroom / Lights",
       "outside_panel": false,
+      "powerup_managed": true,
+      "powerup_rank": 43,
       "priority": "NEVER",
       "priority_target": null,
+      "protection_functions": [
+        "OVERCURRENT"
+      ],
+      "relay_requester": "NONE",
       "relay_state": "CLOSED",
       "relay_state_target": null,
       "shared_meter_group": null,
@@ -46,13 +53,20 @@
         "select": "select.span_panel_bathroom_outlets_circuit_priority",
         "switch": "switch.span_panel_bathroom_outlets_breaker"
       },
+      "feeds_role": null,
       "is_generation": false,
       "is_never_backup": false,
       "is_user_controllable": true,
       "name": "Bathroom / Outlets",
       "outside_panel": false,
+      "powerup_managed": true,
+      "powerup_rank": 37,
       "priority": "NEVER",
       "priority_target": null,
+      "protection_functions": [
+        "OVERCURRENT"
+      ],
+      "relay_requester": "NONE",
       "relay_state": "CLOSED",
       "relay_state_target": null,
       "shared_meter_group": null,
@@ -76,13 +90,20 @@
         "select": "select.span_panel_living_room_lights_circuit_priority",
         "switch": "switch.span_panel_living_room_lights_breaker"
       },
+      "feeds_role": null,
       "is_generation": false,
       "is_never_backup": false,
       "is_user_controllable": true,
       "name": "Living room / Lights",
       "outside_panel": false,
+      "powerup_managed": true,
+      "powerup_rank": 43,
       "priority": "NEVER",
       "priority_target": null,
+      "protection_functions": [
+        "OVERCURRENT"
+      ],
+      "relay_requester": "NONE",
       "relay_state": "CLOSED",
       "relay_state_target": null,
       "shared_meter_group": null,
@@ -105,13 +126,20 @@
         "produced_energy": "sensor.span_panel_other_produced_energy",
         "switch": "switch.span_panel_other_breaker"
       },
+      "feeds_role": null,
       "is_generation": false,
       "is_never_backup": true,
       "is_user_controllable": true,
       "name": "Other",
       "outside_panel": false,
+      "powerup_managed": true,
+      "powerup_rank": 32,
       "priority": "OFF_GRID",
       "priority_target": null,
+      "protection_functions": [
+        "OVERCURRENT"
+      ],
+      "relay_requester": "NONE",
       "relay_state": "CLOSED",
       "relay_state_target": null,
       "shared_meter_group": null,
@@ -134,13 +162,20 @@
         "power": "sensor.span_panel_tesla_power",
         "produced_energy": "sensor.span_panel_tesla_produced_energy"
       },
+      "feeds_role": null,
       "is_generation": false,
       "is_never_backup": true,
       "is_user_controllable": false,
       "name": "Tesla",
       "outside_panel": false,
+      "powerup_managed": true,
+      "powerup_rank": 232,
       "priority": "NEVER",
       "priority_target": null,
+      "protection_functions": [
+        "OVERCURRENT"
+      ],
+      "relay_requester": "NONE",
       "relay_state": "CLOSED",
       "relay_state_target": null,
       "shared_meter_group": null,
@@ -178,6 +213,7 @@
     "upstream_l2_current": "sensor.span_panel_upstream_l2_current"
   },
   "panel_size": 40,
+  "reserved": [],
   "serial": "xg-7814-15i6h",
   "sub_devices": {
     "xg-7814-15i6h_bess": {

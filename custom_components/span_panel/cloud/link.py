@@ -6,6 +6,11 @@ For those, the panel's entry can carry a SPAN account as a subentry. Nothing
 runs while it is idle: each use opens the account's stream, does the one thing
 asked, and lets the stream go again. The link adds no device and no entity.
 
+One more thing only the cloud says is which breakers SPAN API leaves out. On a
+MAIN 40 the two-pole on spaces 46/48 is the battery's: the SPAN app shows it as
+reserved, the cloud reports it, and SPAN API publishes nothing for it. Those
+breakers are read once, when the account is linked, and kept with the link.
+
 The two sides name one panel differently. SPAN API knows it by its gateway
 serial and numbers its circuits one way; the cloud knows it by its board
 serial and numbers them another. What both report identically is the breaker
@@ -16,7 +21,7 @@ panel's circuits is refused as the wrong panel.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -39,6 +44,8 @@ if TYPE_CHECKING:
     from .client import SpanCloudClient
 
 SUBENTRY_CLOUD_ACCOUNT = "cloud_account"
+# The breakers the cloud reports and SPAN API does not, as `{"tabs", "name"}`.
+CONF_RESERVED_BREAKERS = "reserved_breakers"
 
 type Spaces = tuple[int, ...]
 
@@ -71,11 +78,13 @@ class LinkedCloudPanel:
         """Pair the cloud client with the local panel's circuits, by breaker spaces."""
         self.client = client
         self._local = local
+        self._cloud: SpanPanelSnapshot | None = None
         self._cloud_ids: dict[Spaces, str] = {}
 
     async def async_match(self) -> None:
         """Find each local circuit on the cloud side, or refuse the panel as the wrong one."""
-        self._cloud_ids = _circuits_by_spaces(await self.client.get_snapshot())
+        self._cloud = await self.client.get_snapshot()
+        self._cloud_ids = _circuits_by_spaces(self._cloud)
         missing = sorted(set(_circuits_by_spaces(self._local)) - set(self._cloud_ids))
         if missing:
             raise CloudPanelMismatch(
@@ -87,6 +96,17 @@ class LinkedCloudPanel:
                 translation_key="cloud_panel_mismatch",
                 translation_placeholders={"panel": self.client.serial},
             )
+
+    def reserved_breakers(self) -> list[dict[str, Any]]:
+        """Return the breakers the cloud reports on spaces no local circuit occupies."""
+        if self._cloud is None:
+            return []
+        occupied = {tab for circuit in self._local.circuits.values() for tab in circuit.tabs}
+        return [
+            {"tabs": sorted(circuit.tabs), "name": circuit.name}
+            for circuit in self._cloud.circuits.values()
+            if circuit.tabs and occupied.isdisjoint(circuit.tabs)
+        ]
 
     def cloud_circuit_id(self, circuit_id: str) -> str:
         """Return the cloud's id for a local circuit. `ValueError` if it has none."""
@@ -111,10 +131,6 @@ async def async_linked_cloud_panel(
     `CloudPanelMismatch` when the account's panel is not this one. Whatever the
     sign-in or the stream raises passes through for the caller to report.
     """
-    # Imported here so a local-only install never loads the cloud client.
-    from .client import SpanCloudClient  # noqa: PLC0415
-    from .hub import async_acquire_feed  # noqa: PLC0415
-
     account = cloud_account(entry)
     if account is None:
         raise HomeAssistantError(
@@ -122,7 +138,20 @@ async def async_linked_cloud_panel(
             translation_domain=DOMAIN,
             translation_key="cloud_account_missing",
         )
-    data: dict[str, Any] = dict(account.data)
+    async with async_open_cloud_panel(hass, entry, account.data, local) as panel:
+        yield panel
+
+
+@asynccontextmanager
+async def async_open_cloud_panel(
+    hass: HomeAssistant, entry: ConfigEntry, account: Mapping[str, Any], local: SpanPanelSnapshot
+) -> AsyncIterator[LinkedCloudPanel]:
+    """Open an account's panel, linked or about to be, matched against the local one."""
+    # Imported here so a local-only install never loads the cloud client.
+    from .client import SpanCloudClient  # noqa: PLC0415
+    from .hub import async_acquire_feed  # noqa: PLC0415
+
+    data: dict[str, Any] = dict(account)
     hub, feed = await async_acquire_feed(
         hass,
         tokens=data[CONF_CLOUD_TOKENS],
