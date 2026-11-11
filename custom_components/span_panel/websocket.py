@@ -146,6 +146,23 @@ async def handle_rename_circuit(
     connection.send_result(msg["id"], {"name": name})
 
 
+def _supply(snapshot: SpanPanelSnapshot | None) -> dict[str, str] | None:
+    """Return what supplies a root panel, where the panel itself says so.
+
+    Over SPAN API a panel's upstream lugs name the device feeding them. Fed by
+    anything but the utility service, and with a battery present, that device
+    is the battery: a whole-home backup sits between the meter and the panel.
+    Where the panel says nothing, nothing is claimed.
+    """
+    if snapshot is None or snapshot.lugs_at_service_entrance is not False:
+        return None
+    battery = snapshot.battery
+    if not battery.present:
+        return None
+    name = " ".join(part for part in (battery.vendor_name, battery.model) if part)
+    return {"type": "battery", "name": name or "Battery"}
+
+
 @websocket_api.websocket_command({vol.Required("type"): "span_panel/house"})
 @websocket_api.require_admin
 @callback
@@ -179,6 +196,9 @@ def handle_house(
             {
                 "serial": serial,
                 "title": panel.title,
+                # Two panels are often both titled "Span Panel"; the model tells them apart.
+                "model": panel.snapshot.model if panel.snapshot is not None else None,
+                "supply": _supply(panel.snapshot) if depth == 0 else None,
                 "entry_id": panel.entry_id,
                 "device_id": device.id if device is not None else None,
                 "depth": depth,

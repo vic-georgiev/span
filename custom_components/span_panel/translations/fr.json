@@ -10,7 +10,8 @@
       "reauth_successful": "Authentification réussie.",
       "reconfigure_successful": "Adresse de l'hôte mise à jour avec succès.",
       "unique_id_mismatch": "Le panneau à cette adresse a un numéro de série différent. Vous ne pouvez pas passer à un panneau différent lors de la reconfiguration.",
-      "v1_not_supported": "Le micrologiciel v1 n'est pas pris en charge. Veuillez mettre à jour le micrologiciel de votre panneau vers la version v2."
+      "v1_not_supported": "Le micrologiciel v1 n'est pas pris en charge. Veuillez mettre à jour le micrologiciel de votre panneau vers la version v2.",
+      "feed_no_circuits": "Le panneau amont n'a pas encore de circuits à proposer. Réessayez une fois qu'il est connecté."
     },
     "error": {
       "ca_leaf_mismatch": "Le certificat présenté par ce panneau n'est pas signé par l'autorité qu'il a publiée. Vérifiez que le port HTTPS est correct et que rien n'intercepte la connexion, puis réessayez.",
@@ -161,6 +162,20 @@
         "description": "Chaque panneau choisi est ajouté comme sa propre entrée SPAN Panel.",
         "data": {
           "panels": "Panneaux"
+        }
+      },
+      "feed": {
+        "title": "Ce qui alimente ce panneau",
+        "description": "En ajoutant ce panneau, indiquez comment il est alimenté, afin que la vue de la maison le place et ne compte sa puissance qu'une fois. La réponse la plus probable est déjà choisie. Choisissez son propre raccordement s'il est alimenté par le réseau ou par un panneau non SPAN. Vous pourrez le modifier plus tard dans les options du panneau.",
+        "data": {
+          "feed": "Alimenté depuis"
+        }
+      },
+      "feed_circuit": {
+        "title": "Quel circuit alimente ce panneau",
+        "description": "Choisissez le disjoncteur de {upstream} qui alimente ce panneau.",
+        "data": {
+          "circuit": "Circuit de dérivation"
         }
       }
     }
@@ -669,6 +684,44 @@
         "data": {
           "circuit": "Circuit de dérivation"
         }
+      },
+      "menu": {
+        "title": "Options du panneau",
+        "description": "Raccordement de ce panneau :\n\n{connection}",
+        "menu_options": {
+          "general_options": "Options générales",
+          "feed": "Raccordements du panneau"
+        }
+      },
+      "general_options": {
+        "data": {
+          "allow_contextless_control": "Autoriser le contrôle sans utilisateur connecté",
+          "control_lock_timeout": "Réarmement automatique du verrou de contrôle (minutes)",
+          "control_mode": "Qui peut piloter le panneau",
+          "enable_circuit_net_energy_sensors": "Énergie Nette du Circuit",
+          "enable_energy_dip_compensation": "Compenser les Baisses d'Énergie Automatiquement",
+          "enable_panel_net_energy_sensors": "Énergie Nette du Panneau",
+          "energy_reporting_grace_period": "Période de grâce du capteur d'énergie (minutes)",
+          "panel_admin_only": "Utilisateurs Administrateurs Uniquement",
+          "relay_debounce_seconds": "Anti-rebond du relais (secondes)",
+          "show_panel": "Afficher le Panneau dans la Barre Latérale",
+          "snapshot_update_interval": "Intervalle de Mise à Jour du Snapshot (secondes)"
+        },
+        "data_description": {
+          "allow_contextless_control": "Les automatisations, les scripts et les autres intégrations appellent les services sans utilisateur associé. Tant que cette option est désactivée, ces commandes sont refusées. Activez-la si vos automatisations pilotent des circuits.",
+          "control_lock_timeout": "-1 désactive le verrou de contrôle et supprime son interrupteur. 0 maintient le verrou armé jusqu'à ce que quelqu'un le désarme. Toute autre valeur le réarme ce nombre de minutes après son désarmement. Seuls les administrateurs peuvent le désarmer.",
+          "control_mode": "Par défaut, Home Assistant accorde à chaque utilisateur non administrateur le contrôle de toutes les entités. Le restreindre aux administrateurs est le seul moyen de changer cela. Le désactiver arrête la création des entités de contrôle ; leurs entrées de registre, noms et zones sont conservés.",
+          "enable_circuit_net_energy_sensors": "Énergie nette par circuit, tenant compte de la puissance réactive.",
+          "enable_energy_dip_compensation": "Compenser lorsque le panneau signale des lectures d'énergie inférieures. La désactivation efface les compensations.",
+          "enable_panel_net_energy_sensors": "Énergie nette pour le compteur principal et la dérivation, tenant compte des flux bidirectionnels.",
+          "energy_reporting_grace_period": "Minutes pendant lesquelles les capteurs conservent leur dernière valeur lorsque le panneau est hors ligne (0–60). Par défaut : 15.",
+          "panel_admin_only": "Restreindre l'entrée de la barre latérale du tableau de bord aux utilisateurs administrateurs.",
+          "relay_debounce_seconds": "Refuse une seconde commande au relais du même circuit pendant ce nombre de secondes. Refusée, jamais mise en file : une commande de relais déclenchée quelques secondes plus tard sur un panneau qui a changé est pire qu'une erreur visible par l'auteur de l'automatisation. 0 la désactive.",
+          "show_panel": "Afficher le tableau de bord du panneau SPAN comme entrée de barre latérale.",
+          "snapshot_update_interval": "Secondes entre les reconstructions de snapshot (0–15). Plus bas = plus rapide, plus de CPU. 0 = pas de temporisation."
+        },
+        "description": "Configurer les paramètres de l'intégration SPAN Panel.",
+        "title": "Options générales"
       }
     },
     "abort": {

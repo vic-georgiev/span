@@ -156,9 +156,12 @@ def _loaded(snapshot_40: SpanPanelSnapshot) -> dict[str, LoadedPanel]:
 
 
 async def _open_feed_step(hass: HomeAssistant, entry: MockConfigEntry) -> dict:
+    """Open the panel's options and choose "Panel connections" from the menu."""
     result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.MENU
+    assert result["menu_options"] == ["general_options", "feed"]
     return await hass.config_entries.options.async_configure(
-        result["flow_id"], user_input=_shown_values(result["data_schema"])
+        result["flow_id"], user_input={"next_step_id": "feed"}
     )
 
 
@@ -171,7 +174,7 @@ async def test_the_16_is_set_on_the_40s_lugs(hass: HomeAssistant) -> None:
     with (
         patch("custom_components.span_panel.async_apply_panel_registration", AsyncMock()),
         patch(
-            "custom_components.span_panel.config_flow.loaded_panels",
+            "custom_components.span_panel.feed_flow.loaded_panels",
             return_value=_loaded(_panel(MAIN_40, 1.0)),
         ),
     ):
@@ -203,7 +206,7 @@ async def test_a_branch_feed_asks_for_the_circuit(hass: HomeAssistant) -> None:
     with (
         patch("custom_components.span_panel.async_apply_panel_registration", AsyncMock()),
         patch(
-            "custom_components.span_panel.config_flow.loaded_panels", return_value=_loaded(upstream)
+            "custom_components.span_panel.feed_flow.loaded_panels", return_value=_loaded(upstream)
         ),
     ):
         result = await _open_feed_step(hass, entry)
@@ -231,12 +234,70 @@ async def test_a_lone_panel_is_not_asked(hass: HomeAssistant) -> None:
 
     with (
         patch("custom_components.span_panel.async_apply_panel_registration", AsyncMock()),
-        patch("custom_components.span_panel.config_flow.loaded_panels", return_value={}),
+        patch("custom_components.span_panel.feed_flow.loaded_panels", return_value={}),
     ):
-        result = await _open_feed_step(hass, entry)
+        # No menu: the options open straight on the general form, and saving it
+        # stores no feed.
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "init"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], user_input=_shown_values(result["data_schema"])
+        )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert CONF_FEED not in entry.options
+
+
+async def test_the_menu_says_how_the_panel_is_connected_now(hass: HomeAssistant) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=MAIN_16,
+        data={},
+        options={CONF_FEED: {"type": FEED_LUGS, "upstream": MAIN_40}},
+        entry_id="entry-16",
+    )
+    entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.span_panel.feed_flow.loaded_panels",
+        return_value=_loaded(_panel(MAIN_40, 1.0)),
+    ):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == "menu"
+    connection = result["description_placeholders"]["connection"]
+    assert "feed-through lugs of SPAN MAIN 40" in connection
+    # The MAIN 16 has no readings in this fixture, so the check waits.
+    assert "waiting for readings" in connection
+
+
+async def test_general_options_keep_the_feed(hass: HomeAssistant) -> None:
+    feed = {"type": FEED_LUGS, "upstream": MAIN_40}
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=MAIN_16, data={}, options={CONF_FEED: feed}, entry_id="entry-16"
+    )
+    entry.add_to_hass(hass)
+
+    with (
+        patch("custom_components.span_panel.async_apply_panel_registration", AsyncMock()),
+        patch(
+            "custom_components.span_panel.feed_flow.loaded_panels",
+            return_value=_loaded(_panel(MAIN_40, 1.0)),
+        ),
+    ):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], user_input={"next_step_id": "general_options"}
+        )
+        assert result["step_id"] == "general_options"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], user_input=_shown_values(result["data_schema"])
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_FEED] == feed
 
 
 # --- the check at one instant ---------------------------------------------------
@@ -290,3 +351,18 @@ def test_a_stalled_panel_does_not_freeze_the_house() -> None:
     assert (reading.at, reading.left_out) == (10.0, 1)
     # Within a few frames it still sets the clock.
     assert clock_instant([10.0, 8.0]).at == 8.0
+
+
+def test_a_root_panel_fed_through_its_battery_names_it() -> None:
+    from span_panel_api import SpanBatterySnapshot  # noqa: PLC0415
+
+    from custom_components.span_panel.websocket import _supply  # noqa: PLC0415
+
+    battery = SpanBatterySnapshot(vendor_name="Tesla", model="Powerwall 3", present=True)
+    fed_by_battery = replace(_panel(MAIN_40, 1.0), lugs_at_service_entrance=False, battery=battery)
+    assert _supply(fed_by_battery) == {"type": "battery", "name": "Tesla Powerwall 3"}
+    # At the service entrance, unsure, or no battery: nothing is claimed.
+    assert _supply(replace(fed_by_battery, lugs_at_service_entrance=True)) is None
+    assert _supply(replace(fed_by_battery, lugs_at_service_entrance=None)) is None
+    assert _supply(replace(fed_by_battery, battery=SpanBatterySnapshot(present=False))) is None
+    assert _supply(None) is None

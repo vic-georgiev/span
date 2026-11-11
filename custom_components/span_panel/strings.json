@@ -10,7 +10,8 @@
       "reconfigure_successful": "Host updated successfully.",
       "unique_id_mismatch": "The panel at this address has a different serial number. You cannot switch to a different panel during reconfiguration.",
       "v1_not_supported": "v1 firmware is not supported. Please upgrade your panel firmware to v2.",
-      "host_not_set": "No panel address was set; restart the setup."
+      "host_not_set": "No panel address was set; restart the setup.",
+      "feed_no_circuits": "The upstream panel has no circuits to choose from yet. Try again once it has connected."
     },
     "error": {
       "ca_leaf_mismatch": "The certificate this panel serves is not signed by the authority it published. Check that the HTTPS port is correct and that nothing is intercepting the connection, then try again.",
@@ -161,6 +162,20 @@
         "description": "Each panel you pick is added as its own SPAN Panel entry.",
         "data": {
           "panels": "Panels"
+        }
+      },
+      "feed": {
+        "title": "What feeds this panel",
+        "description": "Adding this panel: tell the integration how it is supplied, so the house view can place it and count its power once. The likely answer is already chosen. Choose its own supply if it is fed from the utility or a panel outside SPAN. You can change this later in the panel's options.",
+        "data": {
+          "feed": "Fed from"
+        }
+      },
+      "feed_circuit": {
+        "title": "Which circuit feeds this panel",
+        "description": "Pick the breaker on {upstream} that feeds this panel.",
+        "data": {
+          "circuit": "Branch circuit"
         }
       }
     }
@@ -669,6 +684,44 @@
         "data": {
           "circuit": "Branch circuit"
         }
+      },
+      "menu": {
+        "title": "Panel options",
+        "description": "How this panel is connected:\n\n{connection}",
+        "menu_options": {
+          "general_options": "General options",
+          "feed": "Panel connections"
+        }
+      },
+      "general_options": {
+        "data": {
+          "allow_contextless_control": "Allow control without a logged-in user",
+          "control_lock_timeout": "Control lock auto-relock (minutes)",
+          "control_mode": "Who may operate the panel",
+          "enable_circuit_net_energy_sensors": "Circuit Net Energy",
+          "enable_energy_dip_compensation": "Auto-Compensate Energy Dips",
+          "enable_panel_net_energy_sensors": "Panel Net Energy",
+          "energy_reporting_grace_period": "Energy Sensor Grace Period (minutes)",
+          "panel_admin_only": "Admin Users Only",
+          "relay_debounce_seconds": "Relay debounce (seconds)",
+          "show_panel": "Show Dashboard in Sidebar",
+          "snapshot_update_interval": "Snapshot Update Interval (seconds)"
+        },
+        "data_description": {
+          "allow_contextless_control": "Automations, scripts and other integrations call services with no user attached. While this is off, those commands are refused. Turn it on if your automations operate circuits.",
+          "control_lock_timeout": "-1 turns the control lock off and removes its switch. 0 keeps the lock armed until someone disarms it. Any other value re-arms it that many minutes after it is disarmed. Only administrators can disarm it.",
+          "control_mode": "Home Assistant grants every non-admin user control of every entity by default. Restricting to administrators is the only way to change that. Disabling stops creating the control entities; their registry entries, names and areas are kept.",
+          "enable_circuit_net_energy_sensors": "Net energy per circuit, accounting for reactive power.",
+          "enable_energy_dip_compensation": "Compensate when panel reports lower energy readings. Disabling clears offsets.",
+          "enable_panel_net_energy_sensors": "Net energy for main meter and feed-through, accounting for bidirectional flows.",
+          "energy_reporting_grace_period": "Minutes sensors hold last value when panel is offline (0–60). Default: 15.",
+          "panel_admin_only": "Restrict the dashboard sidebar entry to admin users.",
+          "relay_debounce_seconds": "Refuse a second command to the same circuit's relay within this many seconds. Refused, never queued: a relay command firing seconds late against a changed panel is worse than an error the automation author can see. 0 disables it.",
+          "show_panel": "Display the SPAN Panel dashboard as a sidebar entry.",
+          "snapshot_update_interval": "Seconds between snapshot rebuilds (0–15). Lower = faster, more CPU. 0 = no debounce."
+        },
+        "description": "Configure SPAN Panel integration settings.",
+        "title": "General options"
       }
     },
     "abort": {

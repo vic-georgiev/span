@@ -10,7 +10,8 @@
       "reauth_successful": "認証できました",
       "reconfigure_successful": "ホストが正常に更新されました。",
       "unique_id_mismatch": "このアドレスのパネルは異なるシリアル番号を持っています。再設定中に別のパネルに切り替えることはできません。",
-      "v1_not_supported": "v1ファームウェアはサポートされていません。パネルのファームウェアをv2にアップグレードしてください。"
+      "v1_not_supported": "v1ファームウェアはサポートされていません。パネルのファームウェアをv2にアップグレードしてください。",
+      "feed_no_circuits": "上流のパネルにはまだ選択できる回路がありません。接続後にもう一度お試しください。"
     },
     "error": {
       "ca_leaf_mismatch": "このパネルが提供する証明書は、パネルが公開した認証局で署名されていません。HTTPS ポートが正しいこと、接続が傍受されていないことを確認してから、もう一度お試しください。",
@@ -161,6 +162,20 @@
         "description": "選択した各パネルは、それぞれ個別の SPAN Panel エントリとして追加されます。",
         "data": {
           "panels": "パネル"
+        }
+      },
+      "feed": {
+        "title": "このパネルの給電元",
+        "description": "このパネルを追加するにあたり、給電方法を指定してください。ハウスビューで正しく配置され、電力が二重に数えられなくなります。最も可能性の高い答えがあらかじめ選ばれています。電力会社やSPAN以外のパネルから給電されている場合は「独自の電源」を選びます。後からパネルのオプションで変更できます。",
+        "data": {
+          "feed": "給電元"
+        }
+      },
+      "feed_circuit": {
+        "title": "このパネルに給電する回路",
+        "description": "このパネルに給電している{upstream}のブレーカーを選んでください。",
+        "data": {
+          "circuit": "分岐回路"
         }
       }
     }
@@ -669,6 +684,44 @@
         "data": {
           "circuit": "分岐回路"
         }
+      },
+      "menu": {
+        "title": "パネルのオプション",
+        "description": "このパネルの接続状況:\n\n{connection}",
+        "menu_options": {
+          "general_options": "一般オプション",
+          "feed": "パネルの接続"
+        }
+      },
+      "general_options": {
+        "data": {
+          "allow_contextless_control": "ログインユーザーなしの操作を許可する",
+          "control_lock_timeout": "コントロールロックの自動再施錠（分）",
+          "control_mode": "パネルを操作できるユーザー",
+          "enable_circuit_net_energy_sensors": "回路正味エネルギー",
+          "enable_energy_dip_compensation": "エネルギー低下を自動補正",
+          "enable_panel_net_energy_sensors": "パネル正味エネルギー",
+          "energy_reporting_grace_period": "エネルギーセンサー猶予期間 (分)",
+          "panel_admin_only": "管理ユーザーのみ",
+          "relay_debounce_seconds": "リレーのデバウンス（秒）",
+          "show_panel": "サイドバーにダッシュボードを表示",
+          "snapshot_update_interval": "スナップショット更新間隔（秒）"
+        },
+        "data_description": {
+          "allow_contextless_control": "オートメーション、スクリプト、他の統合は、ユーザーが紐づかない状態でサービスを呼び出します。無効の間は、そうしたコマンドを拒否します。オートメーションで回路を操作する場合は有効にしてください。",
+          "control_lock_timeout": "-1 はコントロールロックを無効にし、そのスイッチを削除します。0 は誰かが解除するまで施錠したままにします。それ以外の値は、解除してからその分数後に再施錠します。解除できるのは管理者だけです。",
+          "control_mode": "Home Assistant は既定で、管理者以外のすべてのユーザーにすべてのエンティティの操作を許可します。管理者のみに制限することが、これを変更する唯一の方法です。無効にすると操作用エンティティが作成されなくなりますが、レジストリのエントリ、名前、エリアは保持されます。",
+          "enable_circuit_net_energy_sensors": "無効電力を考慮した回路ごとの正味エネルギー。",
+          "enable_energy_dip_compensation": "パネルがより低いエネルギー読み取り値を報告した場合に補正します。無効にするとオフセットがクリアされます。",
+          "enable_panel_net_energy_sensors": "双方向フローを考慮した主幹メーターとフィードスルーの正味エネルギー。",
+          "energy_reporting_grace_period": "パネルがオフライン時にセンサーが最後の値を保持する分数（0〜60）。デフォルト：15。",
+          "panel_admin_only": "ダッシュボードサイドバーエントリを管理ユーザーのみに制限します。",
+          "relay_debounce_seconds": "同じ回路のリレーへの 2 回目のコマンドを、この秒数のあいだ拒否します。キューに入れずに拒否します。状態の変わったパネルに対して数秒遅れで発火するリレーコマンドは、オートメーションの作成者が気づけるエラーよりも危険だからです。0 で無効になります。",
+          "show_panel": "SPANパネルダッシュボードをサイドバーエントリとして表示します。",
+          "snapshot_update_interval": "スナップショット再構築の間隔（秒）（0〜15）。低い値＝高速、CPU負荷増。0＝デバウンスなし。"
+        },
+        "description": "SPAN Panel統合の設定を構成します。",
+        "title": "一般オプション"
       }
     },
     "abort": {

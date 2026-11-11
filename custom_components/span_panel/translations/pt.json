@@ -10,7 +10,8 @@
       "reauth_successful": "Autenticação bem-sucedida.",
       "reconfigure_successful": "Anfitrião atualizado com sucesso.",
       "unique_id_mismatch": "O painel neste endereço tem um número de série diferente. Não é possível mudar para um painel diferente durante a reconfiguração.",
-      "v1_not_supported": "O firmware v1 não é suportado. Atualize o firmware do seu painel para v2."
+      "v1_not_supported": "O firmware v1 não é suportado. Atualize o firmware do seu painel para v2.",
+      "feed_no_circuits": "O painel a montante ainda não tem circuitos para escolher. Tente novamente quando estiver ligado."
     },
     "error": {
       "ca_leaf_mismatch": "O certificado que este painel serve não está assinado pela autoridade que publicou. Verifique se a porta HTTPS está correta e se nada está a intercetar a ligação, e tente novamente.",
@@ -161,6 +162,20 @@
         "description": "Cada painel escolhido é adicionado como sua própria entrada de SPAN Panel.",
         "data": {
           "panels": "Painéis"
+        }
+      },
+      "feed": {
+        "title": "O que alimenta este painel",
+        "description": "Ao adicionar este painel, indique como é alimentado, para que a vista da casa o posicione e conte a sua potência uma só vez. A resposta mais provável já está escolhida. Escolha alimentação própria se for alimentado pela concessionária ou por um painel que não seja SPAN. Pode alterar isto mais tarde nas opções do painel.",
+        "data": {
+          "feed": "Alimentado a partir de"
+        }
+      },
+      "feed_circuit": {
+        "title": "Qual circuito alimenta este painel",
+        "description": "Escolha o disjuntor em {upstream} que alimenta este painel.",
+        "data": {
+          "circuit": "Circuito derivado"
         }
       }
     }
@@ -669,6 +684,44 @@
         "data": {
           "circuit": "Circuito derivado"
         }
+      },
+      "menu": {
+        "title": "Opções do painel",
+        "description": "Como este painel está ligado:\n\n{connection}",
+        "menu_options": {
+          "general_options": "Opções gerais",
+          "feed": "Ligações do painel"
+        }
+      },
+      "general_options": {
+        "data": {
+          "allow_contextless_control": "Permitir controlo sem um utilizador com sessão iniciada",
+          "control_lock_timeout": "Rearme automático do bloqueio de controlo (minutos)",
+          "control_mode": "Quem pode operar o painel",
+          "enable_circuit_net_energy_sensors": "Energia Líquida do Circuito",
+          "enable_energy_dip_compensation": "Compensar Quedas de Energia Automaticamente",
+          "enable_panel_net_energy_sensors": "Energia Líquida do Painel",
+          "energy_reporting_grace_period": "Período de Graça do Sensor de Energia (minutos)",
+          "panel_admin_only": "Apenas Usuários Administradores",
+          "relay_debounce_seconds": "Antirrepique do relé (segundos)",
+          "show_panel": "Mostrar Painel na Barra Lateral",
+          "snapshot_update_interval": "Intervalo de Atualização do Snapshot (segundos)"
+        },
+        "data_description": {
+          "allow_contextless_control": "Automações, scripts e outras integrações invocam serviços sem qualquer utilizador associado. Enquanto esta opção estiver desativada, esses comandos são recusados. Ative-a se as suas automações operarem circuitos.",
+          "control_lock_timeout": "-1 desativa o bloqueio de controlo e remove o respetivo interruptor. 0 mantém o bloqueio armado até alguém o desarmar. Qualquer outro valor rearma-o esse número de minutos depois de ser desarmado. Só os administradores o podem desarmar.",
+          "control_mode": "Por predefinição, o Home Assistant concede a todos os utilizadores não administradores o controlo de todas as entidades. Restringir a administradores é a única forma de alterar isso. Desativar deixa de criar as entidades de controlo; as respetivas entradas de registo, nomes e áreas são mantidos.",
+          "enable_circuit_net_energy_sensors": "Energia líquida por circuito, contabilizando potência reativa.",
+          "enable_energy_dip_compensation": "Compensar quando o painel reporta leituras de energia mais baixas. Ao desativar, as compensações são apagadas.",
+          "enable_panel_net_energy_sensors": "Energia líquida para o medidor principal e derivação, contabilizando fluxos bidirecionais.",
+          "energy_reporting_grace_period": "Minutos que os sensores mantêm o último valor quando o painel está offline (0–60). Padrão: 15.",
+          "panel_admin_only": "Restrinja a entrada da barra lateral do painel de controle apenas aos usuários administradores.",
+          "relay_debounce_seconds": "Recusa um segundo comando ao relé do mesmo circuito dentro deste número de segundos. Recusado, nunca colocado em fila: um comando de relé disparado segundos mais tarde contra um painel que mudou é pior do que um erro que o autor da automação consegue ver. 0 desativa.",
+          "show_panel": "Exiba o painel de controle do SPAN como uma entrada de barra lateral.",
+          "snapshot_update_interval": "Segundos entre reconstruções do snapshot (0–15). Menor = mais rápido, mais CPU. 0 = sem debounce."
+        },
+        "description": "Configurar os ajustes da integração SPAN Panel.",
+        "title": "Opções gerais"
       }
     },
     "abort": {

@@ -4070,3 +4070,67 @@ async def test_every_route_creates_the_entry_whatever_the_hardware_version(
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_PANEL_SERIAL] == HARDWARE_PANEL_SERIAL
+
+
+# ---------- what feeds the panel being added ----------
+
+
+@pytest.mark.asyncio
+async def test_adding_a_second_panel_asks_what_feeds_it(hass: HomeAssistant) -> None:
+    """With another panel set up, adding one asks how it connects, the likely answer chosen."""
+    from custom_components.span_panel.house import (  # noqa: PLC0415
+        CONF_FEED,
+        OWN_SUPPLY,
+        LoadedPanel,
+    )
+
+    from .factories import SpanPanelSnapshotFactory  # noqa: PLC0415
+
+    upstream_serial = "xg-test-40"
+    # The panel already set up passes power through its feed-through lugs.
+    upstream = SpanPanelSnapshotFactory.create(
+        serial_number=upstream_serial, feedthrough_power_w=457.0
+    )
+    others = {
+        upstream_serial: LoadedPanel(
+            upstream_serial, "entry-40", "Span Panel", OWN_SUPPLY, upstream
+        )
+    }
+    with (
+        patch(
+            "custom_components.span_panel.config_flow.detect_api_version",
+            return_value=MOCK_V2_DETECTION,
+        ),
+        patch("custom_components.span_panel.config_flow.validate_host", return_value=True),
+        patch(
+            "custom_components.span_panel.config_flow.validate_v2_passphrase",
+            return_value=MOCK_V2_AUTH,
+        ),
+        patch("custom_components.span_panel.feed_flow.loaded_panels", return_value=others),
+        patch("custom_components.span_panel.async_setup_entry", return_value=True),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_USER}
+        )
+        result = await _submit_host_and_pin(hass, result["flow_id"], {CONF_HOST: MOCK_HOST})
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"next_step_id": "auth_passphrase"}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_HOP_PASSPHRASE: MOCK_PASSPHRASE}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"entity_naming_pattern": "friendly_names"}
+        )
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "feed"
+        feed_field = next(key for key in result["data_schema"].schema if key == CONF_FEED)
+        assert feed_field.default() == f"lugs:{upstream_serial}"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_FEED: f"lugs:{upstream_serial}"}
+        )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["options"][CONF_FEED] == {"type": "lugs", "upstream": upstream_serial}
