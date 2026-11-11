@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
-from .connections import entry_serial
 from .const import CONF_API_VERSION, CONF_HOP_PASSPHRASE, PANEL_CA_PENDING
 from .control_gate import ControlMode
 from .options import ALLOW_CONTEXTLESS_CONTROL, CONTROL_MODE
@@ -244,7 +243,7 @@ def _remove_unmapped_tab_sensors(hass: HomeAssistant, config_entry: SpanPanelCon
 
     An entry with no unique id has no serial to match on, and is left alone.
     """
-    serial = entry_serial(config_entry)
+    serial = config_entry.unique_id
     if not serial:
         return
     pattern = re.compile(

@@ -35,7 +35,6 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.util import dt as dt_util
 from span_panel_api import SpanPanelSnapshot
 
-from .connections import entry_serial, serial_key
 from .const import DOMAIN
 from .coordinator import SpanPanelCoordinator
 from .entity import SpanPanelEntity
@@ -272,11 +271,10 @@ def loaded_panels(hass: HomeAssistant) -> dict[str, LoadedPanel]:
     panels: dict[str, LoadedPanel] = {}
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         runtime = loaded_runtime_data(entry)
-        serial = entry_serial(entry)
-        if runtime is None or serial is None:
+        if runtime is None or entry.unique_id is None:
             continue
-        panels[serial] = LoadedPanel(
-            serial=serial,
+        panels[entry.unique_id] = LoadedPanel(
+            serial=entry.unique_id,
             entry_id=entry.entry_id,
             title=entry.title,
             feed=feed_from_options(entry.options),
@@ -291,18 +289,9 @@ def _loaded_coordinator(hass: HomeAssistant, serial: str | None) -> SpanPanelCoo
 
     if serial is None:
         return None
-    # A panel answers through whichever connection owns it, so look the serial
-    # up by serial rather than by unique id: a cloud entry's unique id carries a
-    # prefix (see `connections`). Any entry with runtime data counts, as before,
-    # including one still finishing its setup.
-    key = serial_key(serial)
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        if serial_key(entry_serial(entry)) != key:
-            continue
-        runtime = loaded_runtime_data(entry)
-        if runtime is not None:
-            return runtime.coordinator
-    return None
+    entry = hass.config_entries.async_entry_for_domain_unique_id(DOMAIN, serial)
+    runtime = loaded_runtime_data(entry) if entry is not None else None
+    return runtime.coordinator if runtime is not None else None
 
 
 def house_feeds(panels: Mapping[str, LoadedPanel]) -> dict[str, Feed]:

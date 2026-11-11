@@ -23,6 +23,7 @@ from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
+from custom_components.span_panel import _async_restore_cloud_unique_ids
 from custom_components.span_panel.cloud import hub as hub_module
 from custom_components.span_panel.cloud.clock import house_clock
 from custom_components.span_panel.cloud.snapshot import (
@@ -73,7 +74,6 @@ from custom_components.span_panel.cloud.span_client.models import (
     PropertySpec,
     Reading,
 )
-from custom_components.span_panel.connections import cloud_unique_id
 from custom_components.span_panel.const import (
     API_VERSION_CLOUD,
     CONF_API_VERSION,
@@ -84,6 +84,7 @@ from custom_components.span_panel.const import (
     CONF_CLOUD_USER_ID,
     DOMAIN,
 )
+from custom_components.span_panel.diagnostics import async_get_config_entry_diagnostics
 from custom_components.span_panel.options import ALLOW_CONTEXTLESS_CONTROL
 
 TOKENS = {
@@ -652,10 +653,7 @@ async def test_sign_in_adds_an_entry_per_panel_picked(hass: HomeAssistant) -> No
         await hass.async_block_till_done()
 
     entries = hass.config_entries.async_entries(DOMAIN)
-    assert {e.unique_id for e in entries} == {
-        cloud_unique_id(SERIAL_40),
-        cloud_unique_id(SERIAL_16),
-    }
+    assert {e.unique_id for e in entries} == {SERIAL_40, SERIAL_16}
     for entry in entries:
         assert entry.data[CONF_API_VERSION] == API_VERSION_CLOUD
         assert "password" not in entry.data
@@ -1420,3 +1418,44 @@ async def test_history_exports_to_a_file_and_a_download_link(
             e["url"].startswith("/api/span_panel/history/") and "authSig=" in e["url"]
             for e in exports
         )
+
+
+async def test_a_cloud_panels_diagnostics_download_without_its_sign_in(hass: HomeAssistant) -> None:
+    """A cloud panel has no device tree to export, and its account stays out of the file."""
+    FakeStream.backends = {}
+    entry = _entry(SERIAL_40, "MAIN 40")
+    entry.add_to_hass(hass)
+
+    with (
+        patch.object(hub_module, "discover", return_value=[SITE]),
+        patch.object(hub_module, "SiteStream", FakeStream),
+        patch.object(hub_module, "write_tokens_if_missing"),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        report = await async_get_config_entry_diagnostics(hass, entry)
+
+        assert report["device_tree"] is None
+        assert report["device_tree_unavailable"] == "cloud_connection"
+        stored = report["config_entry"]["data"]
+        for key in (CONF_CLOUD_TOKENS, CONF_CLOUD_USER_ID, CONF_CLOUD_DEVICE_UUID):
+            assert stored[key] == "**REDACTED**"
+        # What tells one connection's circuits from another's: the breaker spaces.
+        assert all("tabs" in circuit for circuit in report["circuits"].values())
+
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+
+async def test_a_prefixed_cloud_entry_gets_its_serial_back(hass: HomeAssistant) -> None:
+    entry = _entry(SERIAL_40, "MAIN 40")
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(entry, unique_id=f"cloud:{SERIAL_40}")
+    untouched = _entry(SERIAL_16, "MAIN 16")
+    untouched.add_to_hass(hass)
+
+    _async_restore_cloud_unique_ids(hass)
+
+    assert entry.unique_id == SERIAL_40
+    assert untouched.unique_id == SERIAL_16
