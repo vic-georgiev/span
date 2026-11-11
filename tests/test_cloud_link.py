@@ -22,6 +22,7 @@ from custom_components.span_panel.cloud.link import (
     CONF_RESERVED_BREAKERS,
     SUBENTRY_CLOUD_ACCOUNT,
     CloudPanelMismatch,
+    LinkedCloudPanel,
     async_linked_cloud_panel,
     cloud_account,
 )
@@ -304,3 +305,48 @@ def test_which_battery_is_on_which_breaker_is_not_guessed() -> None:
 
 def test_no_account_no_reserved_breakers() -> None:
     assert _reserved_breakers(_local_entry(linked=False), {"dev-bess": {"type": "bess"}}) == []
+
+
+async def test_the_cloud_panel_names_its_circuits_as_the_local_one_does(
+    hass: HomeAssistant,
+) -> None:
+    FakeStream.backends = {}
+    local = SpanPanelSnapshotFactory.create(
+        serial_number=LOCAL_SERIAL,
+        circuits={
+            "circuit-1": SpanCircuitSnapshotFactory.create(
+                circuit_id="circuit-1", tabs=[9], name="Kitchen"
+            ),
+            "circuit-8": SpanCircuitSnapshotFactory.create(
+                circuit_id="circuit-8", tabs=[11, 13], name="Something else"
+            ),
+        },
+    )
+    discover, stream, tokens = _cloud()
+    with discover, stream, tokens:
+        async with async_linked_cloud_panel(hass, _local_entry(), local) as panel:
+            assert panel.names_in_common() == 1
+
+
+async def test_of_two_panels_with_one_layout_the_one_named_alike_is_linked(
+    hass: HomeAssistant,
+) -> None:
+    FakeStream.backends = {}
+    entry = _local_entry(linked=False)
+    entry.add_to_hass(hass)
+    discover, stream, tokens = _cloud()
+
+    def names(panel: LinkedCloudPanel) -> int:
+        return 3 if panel.client.serial == SERIAL_16 else 0
+
+    # Both of the account's panels fit; only the MAIN 16 names circuits alike.
+    with (
+        discover,
+        stream,
+        tokens,
+        _running(_local_snapshot({"remote-ct": []})),
+        patch.object(LinkedCloudPanel, "names_in_common", names),
+    ):
+        result = await _sign_in(hass, entry)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert cloud_account(entry).data[CONF_CLOUD_PANEL_KEY] == SERIAL_16

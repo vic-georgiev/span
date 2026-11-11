@@ -240,12 +240,13 @@ class CloudAccountSubentryFlow(ConfigSubentryFlow):
     Sign in, and the account's panel that is this one is found for you. The two
     sides give one panel different serials, so it is found by what they report
     identically: the breaker spaces its circuits occupy. A panel already linked
-    to another entry is not considered. Only if more than one panel fits is the
-    choice asked for. Only the tokens SPAN issues are kept.
+    to another entry is not considered. Where several fit, the one naming the
+    most circuits alike is taken, and only a tie is asked about. Only the tokens SPAN issues are kept.
     """
 
     _matches: dict[str, dict[str, Any]]
     _titles: dict[str, str]
+    _names_in_common: dict[str, int]
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> SubentryFlowResult:
         """Sign in to the SPAN account this panel belongs to."""
@@ -282,7 +283,7 @@ class CloudAccountSubentryFlow(ConfigSubentryFlow):
         if not candidates:
             return self.async_abort(reason="all_linked")
 
-        self._matches, self._titles = {}, {}
+        self._matches, self._titles, self._names_in_common = {}, {}, {}
         errors: set[str] = set()
         for key, panel in candidates.items():
             data: dict[str, Any] = {
@@ -299,6 +300,13 @@ class CloudAccountSubentryFlow(ConfigSubentryFlow):
             else:
                 errors.add(error)
 
+        if len(self._matches) > 1:
+            # One breaker layout on several of the account's panels: the one
+            # that also names the most circuits as this panel does is it.
+            best = max(self._names_in_common.values())
+            closest = [key for key in self._matches if self._names_in_common[key] == best]
+            if len(closest) == 1:
+                return self._link(closest[0])
         if len(self._matches) == 1:
             return self._link(next(iter(self._matches)))
         if self._matches:
@@ -354,6 +362,7 @@ class CloudAccountSubentryFlow(ConfigSubentryFlow):
         try:
             async with async_open_cloud_panel(self.hass, entry, data, local) as linked:
                 data[CONF_RESERVED_BREAKERS] = linked.reserved_breakers()
+                self._names_in_common[data[CONF_CLOUD_PANEL_KEY]] = linked.names_in_common()
         except CloudPanelMismatch:
             return "wrong_panel"
         except Exception:  # noqa: BLE001 -- any failure to reach the panel is reported the same

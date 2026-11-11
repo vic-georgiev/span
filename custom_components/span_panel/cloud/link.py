@@ -108,6 +108,22 @@ class LinkedCloudPanel:
             if circuit.tabs and occupied.isdisjoint(circuit.tabs)
         ]
 
+    def names_in_common(self) -> int:
+        """Count the local circuits the cloud panel names identically, on the same spaces.
+
+        Names are the panel's own, so both sides report them alike. Two panels
+        with one breaker layout are told apart by them.
+        """
+        if self._cloud is None:
+            return 0
+        return sum(
+            1
+            for circuit in self._local.circuits.values()
+            if circuit.tabs
+            and (cloud_id := self._cloud_ids.get(tuple(sorted(circuit.tabs)))) is not None
+            and self._cloud.circuits[cloud_id].name == circuit.name
+        )
+
     def cloud_circuit_id(self, circuit_id: str) -> str:
         """Return the cloud's id for a local circuit. `ValueError` if it has none."""
         circuit = self._local.circuits.get(circuit_id)
