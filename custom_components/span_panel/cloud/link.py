@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from span_panel_api import SpanCircuitSnapshot, SpanPanelSnapshot
+from span_panel_api import PublishOutcome, SpanCircuitSnapshot, SpanPanelSnapshot
 
 from custom_components.span_panel.const import (
     CONF_CLOUD_DEVICE_UUID,
@@ -135,6 +135,14 @@ class LinkedCloudPanel:
         if cloud_id is None:
             raise ValueError(f"no circuit {circuit_id} on this panel that SPAN's cloud knows")
         return cloud_id
+
+    async def set_circuit_always_on(self, circuit_id: str, always_on: bool) -> PublishOutcome:
+        """Mark a local circuit always on through the cloud, or hand it back."""
+        return await self.client.set_circuit_always_on(self.cloud_circuit_id(circuit_id), always_on)
+
+    async def set_circuit_powerup_rank(self, circuit_id: str, rank: int) -> PublishOutcome:
+        """Set a local circuit's place in PowerUp's order through the cloud."""
+        return await self.client.set_circuit_powerup_rank(self.cloud_circuit_id(circuit_id), rank)
 
     async def rename_circuit(self, circuit_id: str, name: str) -> str:
         """Rename a local circuit through the cloud. Returns the name as sent."""

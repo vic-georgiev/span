@@ -18,8 +18,6 @@ from span_panel_api import SpanCircuitSnapshot, SpanPanelSnapshot
 
 from .adoption import AdoptedSwitch, create_adopted_switches
 from .const import (
-    API_VERSION_CLOUD,
-    CONF_API_VERSION,
     DOMAIN,
     USE_CIRCUIT_NUMBERS,
     CircuitRelayState,
@@ -42,7 +40,7 @@ from .helpers import (
     construct_voltage_attribute,
     remove_withdrawn_controls,
 )
-from .load_settings import SpanAlwaysOnSwitch, always_on_switches
+from .load_settings import SpanAlwaysOnSwitch, always_on_switches, offers_load_settings
 from .naming import (
     circuit_object_id_base,
     release_registry_name_written_by_older_release,
@@ -592,8 +590,8 @@ async def async_setup_entry(
             continue
         entities.append(SpanPanelCircuitsSwitch(coordinator, circuit_id, _device_name))
 
-    # Always on, which only SPAN's cloud can write today.
-    if config_entry.data.get(CONF_API_VERSION) == API_VERSION_CLOUD:
+    # Always on, which only SPAN's cloud can write: its connection, or a linked account.
+    if offers_load_settings(config_entry):
         entities.extend(always_on_switches(coordinator, snapshot))
 
     # Settable properties on devices this integration models nothing for.

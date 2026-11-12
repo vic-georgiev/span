@@ -11,7 +11,11 @@ The backup priority is the third setting, and stays the existing priority
 select. Each change goes through the control gate like a relay command, and
 counts as done only when the panel's own snapshot reports it.
 
-Offered only over SPAN's cloud, the one transport that can write them today.
+Only SPAN's cloud can write them today. A panel on SPAN's cloud writes them
+through its own connection; a panel read locally writes them through its linked
+SPAN account, opened for the one change (see `cloud.link`), and reads them
+back from the panel like everything else. A local panel with no account has
+neither control.
 """
 
 from __future__ import annotations
@@ -20,14 +24,19 @@ from typing import Any, ClassVar
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.exceptions import HomeAssistantError
 from span_panel_api import PublishOutcome, SpanCircuitSnapshot, SpanPanelSnapshot
 
 from .cloud.client import SpanCloudClient
+from .cloud.link import async_linked_cloud_panel, cloud_account
+from .const import API_VERSION_CLOUD, CONF_API_VERSION
+from .control_gate import ControlGate
 from .coordinator import SpanPanelCoordinator
 from .entity import SpanPanelEntity
 from .helpers import construct_circuit_label
+from .runtime import loaded_runtime_data
 
 # The highest rank offered. Ranks only order circuits, so any ceiling above the
 # number of circuits on a panel is enough; SPAN's own limit is not recovered.
@@ -42,6 +51,11 @@ def circuit_has_load_settings(circuit: SpanCircuitSnapshot) -> bool:
     nothing these controls could change.
     """
     return circuit.pcs_managed is True or circuit.always_on
+
+
+def offers_load_settings(entry: ConfigEntry) -> bool:
+    """Whether this entry can write load settings: over SPAN's cloud, or a linked account."""
+    return entry.data.get(CONF_API_VERSION) == API_VERSION_CLOUD or cloud_account(entry) is not None
 
 
 def _circuits_with_settings(snapshot: SpanPanelSnapshot) -> list[str]:
@@ -80,12 +94,27 @@ class _CircuitLoadSetting(SpanPanelEntity):
         self._attr_device_info = self._build_device_info(coordinator, snapshot)
         self._attr_name = f"{circuit.name or circuit_id} {self._setting_label}"
 
-    def _client(self) -> SpanCloudClient:
-        """Return the cloud client; these entities are only created over SPAN's cloud."""
+    async def _write(self, setting: str, value: Any) -> PublishOutcome:
+        """Send one setting to SPAN: over the panel's cloud connection, or its linked account.
+
+        `setting` names the method both ends share (`set_circuit_always_on`,
+        `set_circuit_powerup_rank`). Through the account the change passes the
+        same control gate as every other command on this entry.
+        """
         client = self.coordinator.client
-        if not isinstance(client, SpanCloudClient):
-            raise HomeAssistantError("These settings can only be changed over SPAN's cloud")
-        return client
+        if isinstance(client, SpanCloudClient):
+            outcome: PublishOutcome = await getattr(client, setting)(self.id, value)
+            return outcome
+        entry = self.coordinator.config_entry
+        runtime = loaded_runtime_data(entry) if entry is not None else None
+        if entry is None or runtime is None:
+            raise HomeAssistantError("The panel is not running")
+        async with async_linked_cloud_panel(self.hass, entry, self.coordinator.data) as panel:
+            panel.client.set_control_interceptor(
+                ControlGate(self.hass, entry, runtime.control_policy, runtime.control_lock)
+            )
+            outcome = await getattr(panel, setting)(self.id, value)
+            return outcome
 
     def _circuit(self) -> SpanCircuitSnapshot | None:
         snapshot: SpanPanelSnapshot = self.coordinator.data
@@ -128,15 +157,11 @@ class SpanAlwaysOnSwitch(_CircuitLoadSetting, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Mark the circuit always on."""
-        await self._apply(
-            self._client().set_circuit_always_on(self.id, True), "an always-on change"
-        )
+        await self._apply(self._write("set_circuit_always_on", True), "an always-on change")
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Hand the circuit back to SPAN's load management."""
-        await self._apply(
-            self._client().set_circuit_always_on(self.id, False), "an always-on change"
-        )
+        await self._apply(self._write("set_circuit_always_on", False), "an always-on change")
 
 
 class SpanPowerUpRankNumber(_CircuitLoadSetting, NumberEntity):
@@ -159,6 +184,5 @@ class SpanPowerUpRankNumber(_CircuitLoadSetting, NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         """Move the circuit to `value` in PowerUp's order."""
         await self._apply(
-            self._client().set_circuit_powerup_rank(self.id, int(value)),
-            "a PowerUp rank change",
+            self._write("set_circuit_powerup_rank", int(value)), "a PowerUp rank change"
         )

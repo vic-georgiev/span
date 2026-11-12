@@ -13,9 +13,10 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigSubentryData
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from span_panel_api import PublishState
 
 from custom_components.span_panel.cloud import hub as hub_module
 from custom_components.span_panel.cloud.link import (
@@ -36,7 +37,13 @@ from custom_components.span_panel.const import (
     CONF_CLOUD_USER_ID,
     DOMAIN,
 )
+from custom_components.span_panel.control_gate import ControlLock, ControlPolicy
 from custom_components.span_panel.diagnostics import TO_REDACT
+from custom_components.span_panel.load_settings import (
+    SpanAlwaysOnSwitch,
+    SpanPowerUpRankNumber,
+    offers_load_settings,
+)
 from custom_components.span_panel.websocket import _reserved_breakers
 
 from .factories import SpanCircuitSnapshotFactory, SpanPanelSnapshotFactory
@@ -387,3 +394,63 @@ async def test_a_rename_waits_for_spans_circuits_after_the_telemetry(
             assert late.circuits_ready.is_set()
             assert await panel.rename_circuit("circuit-1", "Pantry") == "Pantry"
     assert late.renames == [("circuit-21", "Pantry")]
+
+
+async def test_powerup_rank_and_always_on_reach_span_through_the_linked_account(
+    hass: HomeAssistant,
+) -> None:
+    """A local panel writes its load settings through the account, behind the entry's gate."""
+    FakeStream.backends = {}
+    entry = _local_entry()
+    entry.add_to_hass(hass)
+    assert offers_load_settings(entry)
+    assert not offers_load_settings(_local_entry(linked=False))
+
+    coordinator = MagicMock(config_entry=entry, data=_local_snapshot(SAME_PANEL))
+    refusing = MagicMock(
+        control_policy=ControlPolicy.default(), control_lock=ControlLock(armed=False)
+    )
+    runtime = MagicMock(
+        control_policy=ControlPolicy.from_options({"allow_contextless_control": True}),
+        control_lock=ControlLock(armed=False),
+    )
+    rank = SpanPowerUpRankNumber.__new__(SpanPowerUpRankNumber)
+    always_on = SpanAlwaysOnSwitch.__new__(SpanAlwaysOnSwitch)
+    for entity, circuit_id in ((rank, "circuit-1"), (always_on, "circuit-8")):
+        entity.hass = hass
+        entity.coordinator = coordinator
+        entity.id = circuit_id
+
+    discover, stream, tokens = _cloud()
+    with (
+        discover,
+        stream,
+        tokens,
+        patch(
+            "custom_components.span_panel.load_settings.loaded_runtime_data", return_value=runtime
+        ),
+    ):
+        # The entry's own rules apply: by default a command nobody is logged in for is refused.
+        with (
+            patch(
+                "custom_components.span_panel.load_settings.loaded_runtime_data",
+                return_value=refusing,
+            ),
+            pytest.raises(ServiceValidationError),
+        ):
+            await rank._write("set_circuit_powerup_rank", 3)
+        assert FakeStream.backends[SERIAL_40].settings == []
+
+        # Each reaches the cloud's circuit on the same breaker spaces, on a
+        # connection opened for it and closed again.
+        outcome = await rank._write("set_circuit_powerup_rank", 3)
+        assert outcome.state is PublishState.CONFIRMED
+        backend = FakeStream.backends[SERIAL_40]
+        assert backend.settings == [("circuit-21", "powerup_rank", 3)]
+        assert backend.stopped
+
+        outcome = await always_on._write("set_circuit_always_on", True)
+        assert outcome.state is PublishState.CONFIRMED
+        backend = FakeStream.backends[SERIAL_40]
+        assert backend.settings == [("circuit-22", "always_on", True)]
+        assert backend.stopped

@@ -51,13 +51,13 @@ from span_panel_api import (
 )
 
 from .adoption import create_adopted_numbers
-from .const import API_VERSION_CLOUD, CONF_API_VERSION, CONF_DEVICE_NAME, USE_CIRCUIT_NUMBERS
+from .const import CONF_DEVICE_NAME, USE_CIRCUIT_NUMBERS
 from .control_gate import ControlMode
 from .coordinator import SpanPanelCoordinator
 from .entity import SpanPanelEntity
 from .field_paths import DerivedReason, FieldPathDeclarationMixin
 from .helpers import build_evse_unique_id_for_entry, resolve_evse_display_suffix
-from .load_settings import powerup_rank_numbers
+from .load_settings import offers_load_settings, powerup_rank_numbers
 from .runtime import SpanPanelConfigEntry
 from .util import EMPTY_EVSE, evse_device_info, evse_display_name
 
@@ -358,8 +358,8 @@ async def async_setup_entry(
     # data this integration controls.
     async_add_entities(curated)
 
-    # PowerUp rank, which only SPAN's cloud can write today.
-    if config_entry.data.get(CONF_API_VERSION) == API_VERSION_CLOUD:
+    # PowerUp rank, which only SPAN's cloud can write: its connection, or a linked account.
+    if offers_load_settings(config_entry):
         async_add_entities(powerup_rank_numbers(coordinator, snapshot))
 
     # Settable numerics on devices this integration models nothing for, whose
