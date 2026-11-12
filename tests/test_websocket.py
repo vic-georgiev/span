@@ -233,6 +233,25 @@ class TestBuildCircuitEntityMap:
         result = _build_circuit_entity_map({"circuit1"}, entities)
         assert result["circuit1"]["power"] == "sensor.kitchen_power"
 
+    def test_the_breaker_toggle_gets_the_relay_and_never_always_on(self):
+        """A circuit's "Always on" switch is not its breaker, whichever is registered last."""
+        relay = self._make_entity("switch", "span_xg-1_relay_circuit-5", "switch.garage_breaker")
+        always_on = self._make_entity(
+            "switch", "span_xg-1_circuit-5_always_on", "switch.garage_always_on"
+        )
+        rank = self._make_entity(
+            "number", "span_xg-1_circuit-5_powerup_rank", "number.garage_powerup_rank"
+        )
+        for entities in ([relay, always_on, rank], [always_on, rank, relay]):
+            roles = _build_circuit_entity_map({"circuit-5"}, entities)["circuit-5"]
+            assert roles == {
+                "switch": "switch.garage_breaker",
+                "always_on": "switch.garage_always_on",
+                "powerup_rank": "number.garage_powerup_rank",
+            }
+        # With no relay switch there is no breaker toggle at all.
+        assert "switch" not in _build_circuit_entity_map({"circuit-5"}, [always_on])["circuit-5"]
+
     def test_maps_switch_and_select(self):
         """Map switch and select entities onto the same circuit entry."""
         entities = [

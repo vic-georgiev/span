@@ -572,8 +572,17 @@ def _build_circuit_entity_map(
 
         mapped = result.setdefault(matched_circuit_id, {})
 
+        # A circuit has more than one switch: its breaker's relay, and "Always
+        # on". Only the relay is the `switch` role the card's breaker toggle
+        # operates; taking whichever switch came last handed it the other one.
         if entity.domain == "switch":
-            mapped["switch"] = entity.entity_id
+            if "relay" in uid.split("_"):
+                mapped["switch"] = entity.entity_id
+            elif uid.endswith("_always_on"):
+                mapped["always_on"] = entity.entity_id
+        elif entity.domain == "number":
+            if uid.endswith("_powerup_rank"):
+                mapped["powerup_rank"] = entity.entity_id
         elif entity.domain == "select":
             mapped["select"] = entity.entity_id
         elif entity.domain == "sensor":

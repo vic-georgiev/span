@@ -221,16 +221,18 @@ account is linked; empty without an account.
 
 #### Circuit Entity Roles
 
-| Role              | Domain | Description            |
-| ----------------- | ------ | ---------------------- |
-| `power`           | sensor | Instantaneous power    |
-| `produced_energy` | sensor | Cumulative produced Wh |
-| `consumed_energy` | sensor | Cumulative consumed Wh |
-| `net_energy`      | sensor | Net energy Wh          |
-| `current`         | sensor | Measured current       |
-| `breaker_rating`  | sensor | Breaker amperage       |
-| `switch`          | switch | Relay on/off control   |
-| `select`          | select | Shed priority control  |
+| Role              | Domain | Description              |
+| ----------------- | ------ | ------------------------ |
+| `power`           | sensor | Instantaneous power      |
+| `produced_energy` | sensor | Cumulative produced Wh   |
+| `consumed_energy` | sensor | Cumulative consumed Wh   |
+| `net_energy`      | sensor | Net energy Wh            |
+| `current`         | sensor | Measured current         |
+| `breaker_rating`  | sensor | Breaker amperage         |
+| `switch`          | switch | Relay on/off control     |
+| `select`          | select | Shed priority control    |
+| `always_on`       | switch | "Always on" setting      |
+| `powerup_rank`    | number | Place in PowerUp's order |
 
 Not all roles are present on every circuit. A role is omitted when its entity does not exist: `current` is absent if the panel does not report per-circuit
 current. `switch` and `select` are present only while the integration provides that control, meaning the live circuit qualifies for it and **Who may operate the
